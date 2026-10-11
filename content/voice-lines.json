@@ -1,0 +1,158 @@
+{
+ "voice": "en-GB-SoniaNeural",
+ "rate": "-10%",
+ "lines": [
+  {
+   "file": "brown",
+   "text": "brown"
+  },
+  {
+   "file": "red",
+   "text": "red"
+  },
+  {
+   "file": "blue",
+   "text": "blue"
+  },
+  {
+   "file": "grey",
+   "text": "grey"
+  },
+  {
+   "file": "black",
+   "text": "black"
+  },
+  {
+   "file": "green",
+   "text": "green"
+  },
+  {
+   "file": "orange",
+   "text": "orange"
+  },
+  {
+   "file": "pink",
+   "text": "pink"
+  },
+  {
+   "file": "purple",
+   "text": "purple"
+  },
+  {
+   "file": "yellow",
+   "text": "yellow"
+  },
+  {
+   "file": "cap",
+   "text": "cap"
+  },
+  {
+   "file": "t-shirt",
+   "text": "T-shirt"
+  },
+  {
+   "file": "jacket",
+   "text": "jacket"
+  },
+  {
+   "file": "trousers",
+   "text": "trousers"
+  },
+  {
+   "file": "socks",
+   "text": "socks"
+  },
+  {
+   "file": "shoes",
+   "text": "shoes"
+  },
+  {
+   "file": "brown-cap",
+   "text": "brown cap"
+  },
+  {
+   "file": "red-t-shirt",
+   "text": "red T-shirt"
+  },
+  {
+   "file": "blue-jacket",
+   "text": "blue jacket"
+  },
+  {
+   "file": "grey-trousers",
+   "text": "grey trousers"
+  },
+  {
+   "file": "black-socks",
+   "text": "black socks"
+  },
+  {
+   "file": "red-shoes",
+   "text": "red shoes"
+  },
+  {
+   "file": "green-jacket",
+   "text": "green jacket"
+  },
+  {
+   "file": "orange-t-shirt",
+   "text": "orange T-shirt"
+  },
+  {
+   "file": "pink-cap",
+   "text": "pink cap"
+  },
+  {
+   "file": "black-trousers",
+   "text": "black trousers"
+  },
+  {
+   "file": "purple-socks",
+   "text": "purple socks"
+  },
+  {
+   "file": "yellow-shoes",
+   "text": "yellow shoes"
+  },
+  {
+   "file": "grey-cap",
+   "text": "grey cap"
+  },
+  {
+   "file": "blue-t-shirt",
+   "text": "blue T-shirt"
+  },
+  {
+   "file": "brown-jacket",
+   "text": "brown jacket"
+  },
+  {
+   "file": "blue-trousers",
+   "text": "blue trousers"
+  },
+  {
+   "file": "red-socks",
+   "text": "red socks"
+  },
+  {
+   "file": "green-shoes",
+   "text": "green shoes"
+  },
+  {
+   "file": "great",
+   "text": "Great!"
+  },
+  {
+   "file": "try-again",
+   "text": "Try again"
+  },
+  {
+   "file": "well-done",
+   "text": "Well done!"
+  },
+  {
+   "file": "you-collected-all-18",
+   "text": "You collected all 18!"
+  }
+ ]
+}

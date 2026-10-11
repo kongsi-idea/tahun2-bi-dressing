@@ -1,0 +1,99 @@
+# The Dressing Game · 开发规格（老师 2026-10-11 已确认方案）
+
+slug：`tahun2-bi-dressing`　展示名：**The Dressing Game**（老师指定保留）　年级：Tahun 2 英文，单元 Get Dressed!
+纯静态单页（`index.html` + `styles.css` + `app.js`，**不用 build、不用框架、不装新依赖**），界面**全英文**（英文课，要学的就是这些字）。
+
+## 教学目标（老师口述 + 我的假设）
+- 学生会说 trousers，但不会拼。目标：**拼写 18 个 Get Dressed! 词组里的颜色词（10）和衣服词（6）**，同时检验**颜色词掌握**。
+- DSKP 对照（二年级英文 4.3.2「引导写作中准确拼写一定范围熟悉高频词」）：**未核对官方 PDF，只能写「待核对」**，不要写进 Hub 的 dskp-index。
+- 老师要学生**用实体键盘打字**熟悉键盘，同时平板（触控）也要能玩。
+- 「根据学生程度给予适当帮助」→ 学生自己点 Help 逐档求助，老师不用分组设定。
+- 不接班级名单；学生只看自己的分数（存本机 localStorage）。
+
+## 词表（唯一来源，不要增减）
+颜色 10：brown red blue grey black green orange pink purple yellow
+衣服 6：cap、T-shirt、jacket、trousers、socks、shoes
+18 件（转盘顺序＝课本转盘，从 Start 顺时针；`bg` 是该扇形底色，照课本）：
+
+| # | 物品 | 扇形底色 |
+|---|---|---|
+| 1 | brown cap | #FDE047 黄 |
+| 2 | red T-shirt | #93C5FD 浅蓝 |
+| 3 | blue jacket | #F87171 红 |
+| 4 | grey trousers | #C084FC 紫 |
+| 5 | black socks | #FDBA74 橙 |
+| 6 | red shoes | #86EFAC 浅绿 |
+| 7 | green jacket | #F87171 红 |
+| 8 | orange T-shirt | #FDE047 黄 |
+| 9 | pink cap | #FDBA74 橙 |
+| 10 | black trousers | #FDE047 黄 |
+| 11 | purple socks | #86EFAC 浅绿 |
+| 12 | yellow shoes | #C084FC 紫 |
+| 13 | grey cap | #93C5FD 浅蓝 |
+| 14 | blue T-shirt | #F472B6 粉 |
+| 15 | brown jacket | #A3E635 黄绿 |
+| 16 | blue trousers | #F87171 红 |
+| 17 | red socks | #86EFAC 浅绿 |
+| 18 | green shoes | #FFEDD5 浅橙 |
+
+课本转盘另有 Start、Finish 两格：**仅作装饰**（转盘共 20 格，Start 与 Finish 相邻，指针永不落在这两格）。课本转盘只有图没有字——**转盘上不写任何字**，学生要自己认出颜色和衣服，这就是测颜色词。
+每种衣服有 3 种颜色（cap: brown/pink/grey；T-shirt: red/orange/blue；jacket: blue/green/brown；trousers: grey/black/blue；socks: black/purple/red；shoes: red/yellow/green）。
+
+## 核心玩法
+**转盘（3 秒）→ 拼颜色 → 拼衣服 → 卡比巴拉穿上。**
+
+1. **转盘**：点 SPIN（或空白键）转 **3 秒**（ease-out，转 4–5 圈），指针在顶部。落点只会在「**当前这套还没穿的衣服类型**」里随机、并优先「还没收集过的那件」；其余扇形照样画着，只是抽不到。转盘中心站着卡比巴拉（课本中心是穿睡衣的男孩，这里换成卡比巴拉，旁边可放一个衣橱）；穿上的衣服**即时显示在这只卡比巴拉身上**。
+2. **答题面板**（落定后出现）：
+   - 大图显示抽到的那件（带颜色），一个🔊喇叭按钮读出 "red shoes"。
+   - **先拼颜色词，再拼衣服词**（两个字各自一排字母格）。字母格数 = 字母数；`T-shirt` 的连字号格**预先填好、不用打**，打 6 个字母 t s h i r t（不分大小写，显示时第一个 T 大写）。
+   - **输入**：实体键盘直接打（字母键、Backspace；打满自动检查，不需要按 Enter）＋ 画面下方一个 A–Z **屏幕键盘**（触控可点；用实体键盘打字时，屏幕上对应的键会亮一下，帮学生找键位）。
+   - **判定**：打满后逐格判：对的变绿并锁住，错的格子红色抖一下后清空，学生只需重打错的格子；错一次记一次。
+   - **Help（学生自己点，逐档加强）**：① 读出整个单词（再读一次）② 自动填好第一个字母 ③ 偷看完整单词 3 秒再盖住。每点一下升一档，最多三档。
+   - 先颜色、后衣服；两个词都拼对才算这一件完成。
+3. **星星（只给学生自己看）**：每件 ★★★ 起，每次 Help 档位或错误累计扣，最低保 ★；拼对的颜色词与衣服词各自累计「无 Help 一次对」次数（用于学生自己的小统计「Colours / Clothes」）。画面上方显示本次总星星和「这套已穿 x/6」。
+4. **一套 6 件**（每种衣服各一件）穿满 → 庆祝（卡比巴拉全身衣服，彩带，读 "Well done!"）→ **把这套存进 Collection（衣橱）**，卡比巴拉脱回光身，**自动进入下一套**：因为同类衣服有 3 种颜色，下一套自然换成别的颜色。老师要求：**一套过关后要继续答**，要把 18 件都收集到。
+5. **全部 18 件收集完成**：大庆祝页「You collected all 18!」，显示总星星，提供 Play again（清空收集重来）。至少 3 套才会走到这一步。
+6. **Collection 页**：18 个格子（已收集显示彩色衣服，未收集显示灰色剪影＋ ?），点已收集的读一次词组。
+7. 进度（已收集、星星）存 localStorage，写读都包 try/catch；Reset 用**页内自制确认框**，不用 `alert()`／`confirm()`。
+
+## 素材（已就绪，在 `assets/src/`，白底原图）
+`capybara.png`（站立，正面）、`cap.png`、`tshirt.png`、`jacket.png`、`trousers.png`、`socks.png`、`shoes.png`（衣服都是近白灰、中性，可着色）。
+1. **预处理一次**：去白底（从四边洪水填充，保留衣服内部的白色），输出带透明度的 PNG 到 `assets/`（裁掉多余边、保持宽高比）。**机器没有 PIL／ImageMagick**，用 Playwright（Python，已装）开浏览器 canvas 处理并导出，或 numpy + 浏览器；脚本放 `scripts/prep-assets.py`，可重跑。
+2. **着色**：运行时用 canvas 把近白衣服着成 10 种颜色（multiply 保留明暗，再叠一层原图的高光让深色/黑色仍看得出褶皱），结果缓存。目标色：brown #8B5A2B、red #D62828、blue #1E6FD9、grey #8E949B、black #2B2B2E、green #2E9E4F、orange #F28C1B、pink #F27AB0、purple #7B3FBF、yellow #F6C90E。
+3. **必须验收**：做一张 18 件着色后的「总览图」（`.playwright-output/tinted-18.png`），**每件缩到转盘上的大小（约 70px）也要能一眼分出颜色**（尤其 grey/black/brown 三个深色、pink/red/orange 三个暖色）。分不清就调色，不要交付。
+4. **叠穿位置**：卡比巴拉身上有 6 个槽位，按图层从下到上 socks → shoes → trousers → T-shirt → jacket → cap；位置用百分比定位，在 1366×768 和手机直立都要对准（帽子在两耳之间、鞋袜在脚上、裤子盖住腿、T恤在躯干、外套叠在 T 恤外）。穿上时有「弹进来」的动效（高频操作的动效是儿童工具的乐趣，保留）。
+5. 不用 emoji 当图示；图标（喇叭、星星、键盘）用内联 SVG。**不要用 CSS／SVG 拼角色或衣服**。
+
+## 视觉：「试衣间舞台」（老师选 2；对应 `_style-lab/STYLES.md` 的 07 实体教具／玩具质感，先读那一节）
+- 暖感、厚实、可触摸：木纹衣橱与暖奶油墙，实心亮色、厚边框、多层投影、统一光源（左上），按钮要有「按下去」的分量。
+- 配色从「儿童试衣间、温暖、好玩、清爽」推出一套 token（先写在 `styles.css` 的 `:root`），**不要用 EduNeo 的 #0B1E2D／#0EA5B7**；对比度过 WCAG AA。
+- 字体：字母格与单词用 **Andika**（识字用单层 a/g，很重要）；本地嵌入 woff2（学校电脑 Windows＋Chrome），参考 `../tahun2-bi-punctuation/fonts/`。
+- 版面：1366×768 横屏是主场景（转盘在左或居中，答题面板在旁），iPad 横屏、手机直立也能玩（手机直立时面板在转盘下方，屏幕键盘不挡输入格）。按钮、字母键触控目标 ≥ 44px。
+- 反馈要有分量：拼对时字母格弹跳＋读词；错时抖动，不要吓人，不扣分到零。
+
+## 发音（预录，不用 speechSynthesis）
+- edge-tts，英式女声 `en-GB-SoniaNeural`，rate `-10%`；`gen-voice.py` 从 `content/voice-lines.json` 生成到 `audio/`（档名可读：`red.mp3`、`shoes.mp3`、`red-shoes.mp3`、`well-done.mp3`……），已存在不重录。
+- 要录：10 个颜色词、6 个衣服词（`t-shirt` 念 "T-shirt"）、18 个词组、反馈短句（Great! / Try again / Well done! / You collected all 18!）。
+- 播放失败（音档缺）要静默，不能卡住流程；首次交互后才播放（浏览器自动播放限制）。
+
+## 范围外（不要做）
+Start/Finish 的棋盘玩法、接班级名单、排行榜、Supabase、多人、摄像头、Gemini／任何 API、用户账号、`alert/confirm/prompt`。
+
+## 必备细节
+- `index.html` 的 `</head>` 前必须有：`<script src="https://kongsi-idea.vercel.app/data/track-use.js" data-slug="tahun2-bi-dressing" defer></script>`。
+- 暴露 `window.__dressing`（测试钩子）：`forceNext(itemId)`（下一次转盘强制落在某件）、`state()`（返回已收集、本套已穿、星星）、`allVoiceLines()`。
+- 工具页内署名：不写人名（默认「卢老师」可以省略）；页脚小字「Tahun 2 English · Get Dressed!」。
+- `.gitignore` 已存在；不要提交 `.playwright-output/`、`assets/raw/`。
+
+## 验收标准（交付时逐条给证据）
+1. 冷启动（刷新）无控制台红字；本机用 `python3 -m http.server 8791 --bind 127.0.0.1` 开。
+2. 转盘从点击到停下 **2.8–3.3 秒**（测量）。
+3. 一次完整的 6 件穿满流程（用 `forceNext` 逐件指定）能跑通，卡比巴拉身上 6 件到位，随后**自动进入第二套**且 Collection 里有 6 件。
+4. 实体键盘打字：打错一个字母 → 只有错的格子红抖并清空；打对 → 全绿。`T-shirt` 只需打 6 个字母。
+5. Help 三档逐档生效（朗读／首字母／偷看 3 秒后遮回）。
+6. 18 件全部收集 → 出现完成页；Play again 清空。（可用 localStorage 预置 17 件来测。）
+7. 刷新页面后收集与星星仍在。
+8. 截图：1366×768 横屏、iPad 横屏 1180×820、手机直立 390×844 各一张（转盘页＋答题中＋穿满一套），放 `../../../my-agent/playwright-to-delete/`。文字描述每张看到什么、是否有遮挡／溢出。
+9. `test-e2e.py`（参考 `../tahun1-mt-pecahan/test-e2e.py`）覆盖 3–7，可重跑，通过。
+10. 18 件着色总览图已交付并自检（见素材 3）。
+11. 字体与音档全部本地 200，无外部请求（除 track-use.js）。
