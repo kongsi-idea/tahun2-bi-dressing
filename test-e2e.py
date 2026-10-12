@@ -1,17 +1,17 @@
-"""The Dressing Game 端到端测试（对应 SPEC 验收 1–11）。
-用法：python3 test-e2e.py            （自己开本机静态服务器，不用先启动）
-      TARGET=http://127.0.0.1:8791 python3 test-e2e.py   （改测已经开着的服务器／线上）
-      FAST=1 python3 test-e2e.py     （跳过两套「随机转盘」的长测试，约省 90 秒）
-track-use.js（外部统计脚本）在测试里用空脚本代替，只记录「有被请求」。
-截图 → ~/Documents/my-agent/playwright-to-delete/；测试输出 → .playwright-output/。"""
-import functools, http.server, json, os, subprocess, sys, threading, time
+"""The Dressing Game 端到端测试（改版后：左转盘/答题 5 + 右收藏 7，字母块开关，固定 +5 星，3 套奖励）。
+用法：python3 test-e2e.py            （自己开本机静态服务器）
+      TARGET=http://127.0.0.1:8791 python3 test-e2e.py   （改测已开着的服务器／线上）
+      FAST=1 python3 test-e2e.py     （第 2、3 套和 18 件全收集改用 localStorage 预置，省约 90 秒）
+track-use.js（外部统计）在测试里用空脚本代替，只记录「有被请求」。
+截图 → ~/Documents/my-agent/playwright-to-delete/dressing-test/。"""
+import functools, http.server, os, threading
 from playwright.sync_api import sync_playwright
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, '.playwright-output')
-SHOTS = os.path.expanduser('~/Documents/my-agent/playwright-to-delete')
-os.makedirs(OUT, exist_ok=True); os.makedirs(SHOTS, exist_ok=True)
+SHOTS = os.path.expanduser('~/Documents/my-agent/playwright-to-delete/dressing-test')
+os.makedirs(SHOTS, exist_ok=True)
 FAST = os.environ.get('FAST') == '1'
+KEY = 'tahun2-bi-dressing:v1'
 
 class Q(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -24,20 +24,32 @@ if not TARGET:
 URL = TARGET.rstrip('/') + '/index.html'
 HOST = TARGET.split('//', 1)[1].split('/')[0]
 
-fails = 0
+fails = 0; total = 0
 def check(name, ok, extra=''):
-    global fails
-    print(('  PASS ' if ok else '  FAIL ') + name + (f' — {extra}' if extra else ''))
+    global fails, total
+    total += 1
+    print(('  PASS ' if ok else '  FAIL ') + name + (f' — {extra}' if extra else ''), flush=True)
     if not ok: fails += 1
 
-# ── 通用小工具 ──
-def new_page(br, w=1366, h=768, dsf=1, touch=False):
-    ctx = br.new_context(viewport={'width': w, 'height': h}, device_scale_factor=dsf, has_touch=touch)
+INIT = """
+window.__aud = [];
+(() => { const A = window.Audio;
+  window.Audio = function (src) { window.__aud.push(String(src)); return new A(src); };
+  window.Audio.prototype = A.prototype; })();
+window.__mx = 0;
+setInterval(() => { window.__mx = Math.max(window.__mx, window.scrollY || 0); }, 16);
+addEventListener('scroll', () => { window.__mx = Math.max(window.__mx, window.scrollY || 0); }, true);
+"""
+
+def new_page(br, w=1366, h=768, touch=False):
+    ctx = br.new_context(viewport={'width': w, 'height': h}, has_touch=touch)
     page = ctx.new_page()
-    page.errors = []; page.reqs = []; page.dialogs = []
+    page.errors = []; page.reqs = []; page.dialogs = []; page.areqs = []
+    page.add_init_script(INIT)
     page.on('pageerror', lambda e: page.errors.append('pageerror: ' + str(e)))
     page.on('console', lambda m: m.type == 'error' and page.errors.append('console: ' + m.text))
     page.on('dialog', lambda d: (page.dialogs.append(d.type), d.dismiss()))
+    page.on('request', lambda r: '/audio/' in r.url and page.areqs.append(r.url))
     page.on('response', lambda r: page.reqs.append((r.url, r.status)))
     page.route('**/track-use.js', lambda r: (page.reqs.append((r.request.url, 'mocked')), r.fulfill(status=200, content_type='text/javascript', body='')))
     return page
@@ -45,348 +57,409 @@ def new_page(br, w=1366, h=768, dsf=1, touch=False):
 def open_game(page, preset=None):
     page.goto(URL)
     if preset is not None:
-        page.evaluate("p => localStorage.setItem('tahun2-bi-dressing:v1', JSON.stringify(p))", preset)
+        page.evaluate("([k, p]) => localStorage.setItem(k, JSON.stringify(p))", [KEY, preset])
         page.reload()
     page.wait_for_selector('body[data-ready]'); page.wait_for_timeout(300)
 
-ITEMS = None
-def items(page):
-    global ITEMS
-    if ITEMS is None: ITEMS = page.evaluate('() => window.__dressing.items')
-    return {i['id']: i for i in ITEMS}
-
 def st(page): return page.evaluate('() => window.__dressing.state()')
-def phase(page): return page.evaluate('() => document.body.dataset.phase')
-SPINS = []
-
-def spin(page, item_id=None):
-    if item_id: page.evaluate('id => window.__dressing.forceNext(id)', item_id)
-    page.click('#btnSpin')
-    page.wait_for_selector('body[data-phase=answer]', timeout=9000)
-    SPINS.append(int(page.evaluate("() => document.getElementById('wheelWrap').dataset.lastSpinMs")))
-
-def solve_current(page):
-    s = st(page); it = items(page)[s['current']]
-    page.keyboard.type(it['color'], delay=30)
-    page.wait_for_selector('#rowCloth.active', timeout=5000)
-    page.keyboard.type(it['type'], delay=30)          # type id 就是要打的字母：tshirt / trousers …
-    page.wait_for_selector('body[data-phase=done]', timeout=5000)
-    page.wait_for_selector('body[data-phase=idle], body[data-phase=celebrate], body[data-phase=final]', timeout=8000)
-
-def play_item(page, item_id):
-    spin(page, item_id); solve_current(page)
-
+def aud(page): return page.evaluate('() => window.__aud.slice()')
+def ITEMS(page): return {i['id']: i for i in page.evaluate('() => window.__dressing.items')}
+def set_of(page, iid):
+    for k, s in enumerate(page.evaluate('() => window.__dressing.sets')):
+        if any(i['id'] == iid for i in s): return k
+def words(it):
+    cloth = it['phrase'].split(' ', 1)[1]
+    return it['color'], cloth, cloth.replace('-', '')
 def shot(page, name):
     page.wait_for_timeout(350)
     path = os.path.join(SHOTS, name + '.png'); page.screenshot(path=path); return path
 
-SET1 = ['black-socks', 'red-shoes', 'black-trousers', 'orange-t-shirt', 'green-jacket', 'pink-cap']
-ALL18 = ['brown-cap', 'red-t-shirt', 'blue-jacket', 'grey-trousers', 'black-socks', 'red-shoes', 'green-jacket', 'orange-t-shirt', 'pink-cap',
-         'black-trousers', 'purple-socks', 'yellow-shoes', 'grey-cap', 'blue-t-shirt', 'brown-jacket', 'blue-trousers', 'red-socks', 'green-shoes']
+def spin(page, how='wheel', iid=None):
+    """转一次，返回 (毫秒, 转的过程中的音档数增量)"""
+    if iid: page.evaluate('id => window.__dressing.forceNext(id)', iid)
+    n0 = len(aud(page))
+    if how == 'wheel':
+        b = page.eval_on_selector('#wheelWrap', 'e => { const r = e.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }')
+        page.mouse.click(b[0] + b[2] * 0.2, b[1] + b[3] * 0.5)
+    elif how == 'btn': page.evaluate("document.getElementById('btnSpin').click()")
+    elif how == 'space': page.keyboard.press('Space')
+    page.wait_for_selector('body[data-phase=answer]', timeout=9000)
+    ms = int(page.evaluate("() => document.getElementById('wheelWrap').dataset.lastSpinMs"))
+    return ms, len(aud(page)) - n0
 
-def wait_set_done(page, final=False):
-    page.wait_for_selector('body[data-phase=final]' if final else 'body[data-phase=idle]', timeout=12000)
-    page.wait_for_timeout(500)
+def wait_stage(page, stage):
+    page.wait_for_function("s => window.__dressing.state().stage === s", arg=stage, timeout=6000)
+
+def type_word(page, text, how='kb'):
+    if how == 'kb': page.keyboard.type(text, delay=25)
+    else:
+        for ch in text:
+            page.click(f'#tiles .tile-btn:not([disabled])[data-ch="{ch}"]')
+
+def finish(page, it, how='kb', wait_done=True):
+    col, cloth, letters = words(it)
+    type_word(page, col, how); wait_stage(page, 'cloth')
+    type_word(page, letters, how)
+    if wait_done: page.wait_for_selector('body[data-phase=done]', timeout=6000)
+
+def counts(page):
+    return page.evaluate("""() => ({
+      cc: document.getElementById('colCount').textContent, sub: document.getElementById('colSub').textContent,
+      got: document.querySelectorAll('#shelf .tile.got').length, lock: document.querySelectorAll('#shelf .tile.lock').length,
+      st: window.__dressing.state().collected.length, stars: document.getElementById('starTotal').textContent })""")
+
+def check_counts(page, label):
+    c = counts(page); n = c['st']
+    check(f'{label}：#colCount / #colSub / .tile.got / state().collected 四者相等（{n}）',
+          c['cc'] == f'{n}/18' and c['sub'] == f'{n} of 18' and c['got'] == n and c['lock'] == 18 - n, str(c))
+
+def check_locked_clean(page, label):
+    bad = page.evaluate("""() => { const w = ['brown','red','blue','grey','black','green','orange','pink','purple','yellow','cap','shirt','jacket','trousers','socks','shoes'];
+      return [...document.querySelectorAll('#shelf .tile.lock')].filter(t => {
+        const s = (t.textContent + ' ' + (t.getAttribute('aria-label')||'') + ' ' + [...t.querySelectorAll('img')].map(i => i.alt).join(' ')).toLowerCase();
+        return t.textContent.trim() !== 'Locked' || w.some(x => s.includes(x)); }).length; }""")
+    check(f'{label}：锁定格文字只有 "Locked"，没有衣服名', bad == 0, f'违规格 {bad}')
+
+def new_item_on_shelf(page, it):
+    t = page.evaluate("id => { const e = document.querySelector(`#shelf .tile.got[data-id='${id}']`); return e ? e.textContent.trim() : null }", it['id'])
+    return t is not None and it['phrase'].lower() in t.lower()
+
+def layout_ok(page):
+    return page.evaluate("""() => { const q = s => document.querySelector(s).getBoundingClientRect();
+      const p = q('#panel'), c = q('#collection');
+      const xs = new Set([...document.querySelectorAll('#shelf .tile')].map(t => Math.round(t.getBoundingClientRect().x)));
+      const ys = new Set([...document.querySelectorAll('#shelf .tile')].map(t => Math.round(t.getBoundingClientRect().y)));
+      return { ph: p.height, ch: c.height, pw: p.width, cw: c.width, ratio: p.width / (p.width + c.width), cols: xs.size, rows: ys.size,
+               sh: document.documentElement.scrollHeight, ih: innerHeight, sw: document.documentElement.scrollWidth, iw: innerWidth,
+               shelfBottom: q('#shelf').bottom, colBottom: c.bottom }; }""")
+
+def contained(page):
+    """答题视图里的内容（字母块、键盘、格子）没超出面板"""
+    return page.evaluate("""() => { const P = document.getElementById('panel').getBoundingClientRect(); const out = [];
+      for (const e of document.querySelectorAll('#viewAnswer .tile-btn, #viewAnswer .key, #viewAnswer .cell, #viewAnswer .ask-head, #viewAnswer .words, #viewAnswer #tiles, #viewAnswer #kb')) {
+        if (e.offsetParent === null) continue;
+        const r = e.getBoundingClientRect();
+        if (r.left < P.left - 1 || r.right > P.right + 1 || r.top < P.top - 1 || r.bottom > P.bottom + 1) out.push(e.id || e.className); }
+      return out; }""")
+
+def wait_back(page, timeout=9000):
+    page.wait_for_selector('body[data-phase=idle], body[data-phase=reward], body[data-phase=final]', timeout=timeout)
 
 with sync_playwright() as p:
     br = p.chromium.launch()
 
-    # ═════ 验收 1 + 11：冷启动、无外部请求 ═════
-    print('验收 1 / 11  冷启动、请求')
+    # ═════ A 冷启动、请求、布局 ═════
+    print('A  冷启动／请求／布局 1366×768')
     page = new_page(br)
     open_game(page)
-    check('1 冷启动无控制台红字／页面错误', page.errors == [], str(page.errors))
+    check('冷启动无控制台 error／页面错误', page.errors == [], str(page.errors))
     ext = [u for u, s in page.reqs if HOST not in u and 'kongsi-idea.vercel.app/data/track-use.js' not in u]
-    check('11 除 track-use.js 外没有外部请求', ext == [], str(ext))
-    check('11 track-use.js 有被页面请求（已用空脚本代替）', any('track-use.js' in u for u, s in page.reqs))
+    check('除 track-use.js 外无外部请求', ext == [], str(ext))
+    check('track-use.js 有被请求（已用空脚本代替）', any('track-use.js' in u for u, s in page.reqs))
     local = [(u, s) for u, s in page.reqs if HOST in u]
-    bad = [(u, s) for u, s in local if s != 200]
-    fonts = [u for u, s in local if u.endswith('.woff2')]
-    check('11 本地字体 200', len(fonts) >= 1 and not [1 for u, s in local if u.endswith('.woff2') and s != 200], str([u.split('/')[-1] for u in fonts]))
-    check('11 本地请求全部 200', bad == [], str(bad))
-    check('11 Andika 已加载', page.evaluate("() => document.fonts.check('700 20px Andika')"))
-    # 所有音档本地可取、与 voice-lines.json 一致
-    lines = page.evaluate('() => window.__dressing.allVoiceLines()')
-    cfg = json.load(open(os.path.join(HERE, 'content', 'voice-lines.json'), encoding='utf-8'))
-    check('11 allVoiceLines() 与 content/voice-lines.json 一致（38 句）', sorted((l['file'], l['text']) for l in lines) == sorted((l['file'], l['text']) for l in cfg['lines']) and len(lines) == 38, str(len(lines)))
-    codes = [page.request.get(f"{TARGET.rstrip('/')}/audio/{l['file']}.mp3").status for l in lines]
-    check('11 38 个音档全部 200', all(c == 200 for c in codes), str(set(codes)))
-    check('11 页面没有 alert/confirm/prompt', page.dialogs == [])
-    check('词表：18 件、10 色、6 衣', len(items(page)) == 18 and len({i['color'] for i in ITEMS}) == 10 and len({i['type'] for i in ITEMS}) == 6)
+    fonts = [(u, s) for u, s in local if u.endswith('.woff2')]
+    check('本地字体已请求且 200', len(fonts) >= 1 and all(s == 200 for u, s in fonts), str([u.split('/')[-1] for u, s in fonts]))
+    check('冷启动期间本地请求全部 200', all(s == 200 for u, s in local), str([(u.split('/')[-1], s) for u, s in local if s != 200]))
+    check('冷启动不请求任何音档', page.areqs == [] and aud(page) == [], str(page.areqs))
+    L = layout_ok(page)
+    check('1366×768 页面无纵向滚动（scrollHeight <= innerHeight）', L['sh'] <= L['ih'], f"{L['sh']} vs {L['ih']}")
+    check('左卡≈5/12、右卡≈7/12', abs(L['ratio'] - 5 / 12) < 0.04, f"左占 {L['ratio']:.3f}")
+    check('左右两卡同高', abs(L['ph'] - L['ch']) <= 2, f"{L['ph']:.0f} vs {L['ch']:.0f}")
+    check('收藏 6 列 × 3 排共 18 格', L['cols'] == 6 and L['rows'] == 3 and counts(page)['lock'] == 18, f"cols={L['cols']} rows={L['rows']}")
+    check('收藏整体在视口内', L['colBottom'] <= L['ih'] + 1, f"bottom {L['colBottom']:.0f}")
+    check('初始 0/18、0 of 18、0 星', counts(page)['cc'] == '0/18' and counts(page)['sub'] == '0 of 18' and counts(page)['stars'] == '0')
+    check_locked_clean(page, '初始')
+    check('词表：18 件、3 套×6、每套 6 种衣服', len(ITEMS(page)) == 18 and all(len(s) == 6 and len({i['type'] for i in s}) == 6 for s in page.evaluate('() => window.__dressing.sets')))
+    check('字母块默认 On：#btnTilesOn aria-pressed=true', page.get_attribute('#btnTilesOn', 'aria-pressed') == 'true' and page.get_attribute('#btnTilesOff', 'aria-pressed') == 'false')
+    shot(page, 'desktop-1-idle')
+    IT = ITEMS(page)
+    stars = 0; played = []
 
-    # ═════ 验收 2：转盘秒数 ═════
-    print('验收 2  转盘时间')
-    page.evaluate("""() => { const w = document.getElementById('wheelWrap'); window.__T = {};
-      document.getElementById('btnSpin').addEventListener('click', () => { window.__T.click = performance.now(); }, true);
-      new MutationObserver(() => { if (!w.dataset.spinning && window.__T.click && !window.__T.stop) window.__T.stop = performance.now(); }).observe(w, { attributes: true, attributeFilter: ['data-spinning'] }); }""")
-    page.evaluate("() => window.__dressing.forceNext('brown-cap')")
-    page.click('#btnSpin'); page.wait_for_selector('body[data-phase=answer]', timeout=9000)
-    t = page.evaluate('() => window.__T')
-    ms = t['stop'] - t['click']
-    check('2 点击到停下 2.8–3.3 秒', 2800 <= ms <= 3300, f'{ms:.0f} ms（页内量到的 click→停止）')
-    rot = page.evaluate("() => { const m = /rotate\\(([-\\d.]+)deg\\)/.exec(document.getElementById('wRot').style.transform); return parseFloat(m[1]); }")
-    idx = int((((-rot) % 360) + 360) % 360 // 18)
-    check('2 转盘转了 4–5 圈', 4 * 360 <= rot < 5 * 360, f'rot={rot:.0f}°（{rot/360:.2f} 圈）')
-    check('2 指针停在 forceNext 指定的那格（brown cap = 第 1 格）', idx == 1, f'指针下扇形序号 {idx}')
-    check('2 落定后出现答题面板，图与词数正确', page.is_visible('#viewAnswer') and len(page.query_selector_all('#cellsColour .cell')) == 5 and len(page.query_selector_all('#cellsCloth .cell')) == 3)
-    SPINS.append(int(page.evaluate("() => document.getElementById('wheelWrap').dataset.lastSpinMs")))
-    # 转盘上没有任何文字
-    check('2 转盘画布上不写字（页面里没有任何转盘文字节点）', page.evaluate("() => document.getElementById('wheelWrap').innerText.trim() === ''"))
+    # ═════ B 第 1 件 brown-cap：点转盘转、字母块、喇叭、不论错几次 +5 ═════
+    print('B  brown-cap：点转盘 / 字母块 / 喇叭')
+    page.evaluate('window.__mx = 0')
+    ms, da = spin(page, 'wheel', 'brown-cap')
+    check('点转盘转完进入 answer 阶段', st(page)['phase'] == 'answer')
+    check('转盘时长 2.8–3.3 秒', 2800 <= ms <= 3300, f'{ms}ms；__dressing.lastSpinMs()={page.evaluate("() => window.__dressing.lastSpinMs()"):.0f}')
+    check('落点后不自动读音（转盘→开始答题 0 次 Audio/请求）', da == 0 and page.areqs == [], f'Audio 增量 {da}, 请求 {page.areqs}')
+    check('落点 = 指定的 brown-cap', st(page)['current'] == 'brown-cap')
+    check('字母块 On：#tiles 可见、#kb 隐藏', page.is_visible('#tiles') and not page.is_visible('#kb'))
+    tiles = page.eval_on_selector_all('#tiles .tile-btn', 'els => els.map(e => e.dataset.ch)')
+    check('字母块 = brown 的 5 个字母（打乱）', sorted(tiles) == sorted('brown') and len(tiles) == 5, ''.join(tiles))
+    check('颜色格 5 个、衣服格 3 个（先拼颜色）', len(page.query_selector_all('#cellsColour .cell')) == 5 and len(page.query_selector_all('#cellsCloth .cell')) == 3 and page.evaluate("document.getElementById('rowColour').classList.contains('active')"))
+    shot(page, 'desktop-2-answer-tiles')
+    Lc = layout_ok(page)
+    check('答题中（字母块）页面无纵向滚动', Lc['sh'] <= Lc['ih'], f"{Lc['sh']} vs {Lc['ih']}")
+    check('答题中（字母块）内容没超出面板', contained(page) == [], str(contained(page)))
+    check('答题中右侧收藏仍可见且同高', page.is_visible('#shelf') and abs(Lc['ph'] - Lc['ch']) <= 2)
+    # 点一个字母块 → 填入 + .used
+    page.click(f'#tiles .tile-btn[data-ch="{"brown"[0]}"]')
+    check('点字母块 b：格子填入 b、该块 .used', page.inner_text('#cellsColour .cell:nth-child(1)') == 'b' and page.evaluate("document.querySelector('#tiles .tile-btn[data-ch=\"b\"]').classList.contains('used')"))
+    # 喇叭
+    n0 = len(page.areqs)
+    page.click('#btnSay'); page.wait_for_timeout(500)
+    check('点 #btnSay 才请求 audio/*.mp3', len(page.areqs) == n0 + 1 and page.areqs[-1].endswith('.mp3'), str(page.areqs[-1:]))
+    type_word(page, 'rown', 'tiles'); wait_stage(page, 'cloth')
+    check('颜色拼对：.locked 变绿的格子 5 个', len(page.query_selector_all('#cellsColour .cell.locked')) == 5)
+    tiles2 = page.eval_on_selector_all('#tiles .tile-btn', 'els => els.map(e => e.dataset.ch)')
+    check('衣服阶段字母块换成 cap 的 3 个字母', sorted(tiles2) == sorted('cap'), ''.join(tiles2))
+    na = len(aud(page))
+    type_word(page, 'cap', 'tiles')
+    page.wait_for_selector('body[data-phase=done]', timeout=6000)
+    stars += 5; played.append('brown-cap')
+    check('brown-cap 完成：+5 星（用字母块＋点喇叭）', st(page)['stars'] == 5 and page.inner_text('#starTotal') == '5', str(st(page)['stars']))
+    check('立刻出现在右侧 #shelf：.tile.got 写 "brown cap"', new_item_on_shelf(page, IT['brown-cap']))
+    check_counts(page, 'brown-cap 后'); check_locked_clean(page, 'brown-cap 后')
+    page.wait_for_timeout(700)
+    check('拼完整件读一次 phrase 音（brown-cap.mp3）', len(aud(page)) == na + 1 and aud(page)[-1].endswith('brown-cap.mp3'), str(aud(page)[-2:]))
+    wait_back(page)
+    check('第一件期间 scrollY 始终为 0（桌面）', page.evaluate('window.__mx') == 0, str(page.evaluate('window.__mx')))
+    shot(page, 'desktop-3-after-one')
 
-    # ═════ 验收 4：实体键盘 ═════
-    print('验收 4  实体键盘')
-    page.keyboard.press('q')
-    check('4 按实体键时屏幕键盘对应键亮起', page.evaluate("() => document.querySelector('.key[data-k=q]').classList.contains('lit')"))
-    page.keyboard.press('Backspace')   # 清掉刚才那个 q 的脏数据（q 不是 b，会被判错，等清掉）
+    # ═════ C 第 2 件 red-t-shirt：空白键转、屏幕键盘、大小写、错两次仍 +5 ═════
+    print('C  red-t-shirt：空白键 / 屏幕键盘 / 大小写 / 错两次')
+    page.click('#btnTilesOff')
+    check('字母块 Off：#tiles 隐藏、#kb 显示、aria-pressed 切换', not page.is_visible('#tiles') and page.get_attribute('#btnTilesOff', 'aria-pressed') == 'true' and page.get_attribute('#btnTilesOn', 'aria-pressed') == 'false')
+    check('Off 选择存进 localStorage（tiles=false）', page.evaluate("k => JSON.parse(localStorage.getItem(k)).tiles", KEY) is False)
+    # 点完开关按钮后（焦点还在按钮上）直接按空白键，应该能转（学生常这样操作）
+    page.evaluate("window.__dressing.forceNext('red-t-shirt')")
+    page.keyboard.press('Space'); page.wait_for_timeout(600)
+    check('点完 #btnTilesOff 后直接按空白键能转（焦点在开关按钮上）', st(page)['phase'] in ('spinning', 'answer'), f"phase={st(page)['phase']} tiles={st(page)['tiles']}（空白键被按钮吃掉）")
+    if st(page)['phase'] == 'idle':
+        page.evaluate('document.activeElement && document.activeElement.blur()')
+        if st(page)['tiles']: page.click('#btnTilesOff'); page.evaluate('document.activeElement.blur()')
+    ms, da = spin(page, 'space', 'red-t-shirt') if st(page)['phase'] == 'idle' else (int(page.evaluate("document.getElementById('wheelWrap').dataset.lastSpinMs || 0")) if page.wait_for_selector('body[data-phase=answer]', timeout=9000) else 0, 0)
+    check('空白键可转，2.8–3.3 秒、无自动读音', 2800 <= ms <= 3300 and da == 0, f'{ms}ms 音档增量 {da}')
+    check('字母块 Off：#kb 显示、#tiles 隐藏', page.is_visible('#kb') and not page.is_visible('#tiles'))
+    kb = page.evaluate("""() => ({ rows: [...document.querySelectorAll('#kb .kb-row')].map(r => [...r.querySelectorAll('.key:not(.key-shift):not(.key-del)')].map(k => k.textContent.trim()).join('')),
+      shift: !!document.querySelector('#kb .key-shift'), del: !!document.querySelector('#kb .key-del') })""")
+    check('屏幕键盘 qwerty 三排小写＋Shift＋Delete', kb['rows'] == ['qwertyuiop', 'asdfghjkl', 'zxcvbnm'] and kb['shift'] and kb['del'], str(kb))
+    shot(page, 'desktop-4-answer-keyboard')
+    Lc = layout_ok(page)
+    check('答题中（屏幕键盘）无纵向滚动、内容没超出面板', Lc['sh'] <= Lc['ih'] and contained(page) == [], f"{Lc['sh']}/{Lc['ih']} {contained(page)}")
+    # 错的颜色：5 格 → wrong → 清空
+    page.keyboard.type('xxx', delay=20)
+    check('颜色 red 打 "xxx"：3 格 .wrong', len(page.query_selector_all('#cellsColour .cell.wrong')) == 3)
     page.wait_for_timeout(900)
-    cells = lambda sel: page.evaluate("s => [...document.querySelectorAll(s + ' .cell')].map(c => ({cls: c.className, t: c.textContent}))", sel)
-    # brown cap：颜色先打错最后一个字母
-    page.keyboard.type('brow', delay=30); page.keyboard.type('m', delay=30)
-    page.wait_for_timeout(120)
-    c = cells('#cellsColour')
-    check('4 打错一个字母：只有这一格变红抖动', [('wrong' in x['cls']) for x in c] == [False, False, False, False, True] and 'locked' in c[0]['cls'], str([x['cls'] for x in c]))
-    page.wait_for_timeout(750)
-    c = cells('#cellsColour')
-    check('4 错的格子清空，对的 4 格仍锁定', [x['t'] for x in c] == ['b', 'r', 'o', 'w', ''] and ['locked' in x['cls'] for x in c] == [True] * 4 + [False], str([(x['t'], x['cls']) for x in c]))
-    page.keyboard.type('n', delay=30); page.wait_for_timeout(200)
-    c = cells('#cellsColour')
-    check('4 补打对：5 格全绿', all('locked' in x['cls'] for x in c) and ''.join(x['t'] for x in c) == 'brown')
-    page.wait_for_selector('#rowCloth.active', timeout=4000)
-    page.keyboard.type('cap')
-    page.wait_for_selector('body[data-phase=done]', timeout=4000)
-    page.wait_for_selector('body[data-phase=idle]', timeout=6000)
-    # T-shirt 只打 6 个字母
-    spin(page, 'blue-t-shirt')
-    page.keyboard.type('blue'); page.wait_for_selector('#rowCloth.active', timeout=4000)
-    c = cells('#cellsCloth')
-    check('4 T-shirt 共 7 格，其中连字号格预先填好', len(c) == 7 and 'fixed' in c[1]['cls'] and c[1]['t'] == '-', str([x['t'] for x in c]))
+    check('红格后清空、可重打', all(c == '' for c in page.eval_on_selector_all('#cellsColour .cell', 'e => e.map(x => x.textContent)')) and not page.query_selector('#cellsColour .cell.wrong'))
+    page.keyboard.type('red', delay=20); wait_stage(page, 'cloth')
+    cells = page.evaluate("[...document.querySelectorAll('#cellsCloth .cell')].map(c => ({fixed: c.classList.contains('fixed'), t: c.textContent}))")
+    check('T-shirt 7 格，第 2 格是预填连字号', len(cells) == 7 and cells[1]['fixed'] and cells[1]['t'] == '-', str(cells))
+    # 小写 t 作首字母判错（连打 tshirt：只有第一格错）
+    page.keyboard.type('tshirt', delay=20)
+    w = page.evaluate("[...document.querySelectorAll('#cellsCloth .cell')].map(c => c.className)")
+    check('小写 t 作 T-shirt 首字母 → 第 1 格 .wrong（红）、其余 5 格 .locked', 'wrong' in w[0] and sum('locked' in c for c in w) == 5, str(w))
+    page.wait_for_timeout(900)
+    check('错格清空，其余保持', page.inner_text('#cellsCloth .cell:nth-child(1)') == '' and len(page.query_selector_all('#cellsCloth .cell.locked')) == 5)
+    page.keyboard.press('t'); page.wait_for_timeout(100)
+    check('第二次打小写 t 仍判错', 'wrong' in page.get_attribute('#cellsCloth .cell:nth-child(1)', 'class'))
+    page.wait_for_timeout(900)
     page.keyboard.press('Shift+T')
-    for ch in 'shir': page.keyboard.press(ch)
+    page.wait_for_selector('body[data-phase=done]', timeout=6000)
+    stars += 5; played.append('red-t-shirt')
+    check('实体键盘 Shift+t 判对；错了 3 次仍只 +5（共 10）', st(page)['stars'] == 10 and page.inner_text('#starTotal') == '10', str(st(page)['stars']))
+    check('red T-shirt 立刻出现在收藏', new_item_on_shelf(page, IT['red-t-shirt']))
+    check_counts(page, 'red-t-shirt 后'); check_locked_clean(page, 'red-t-shirt 后')
+    wait_back(page)
+
+    # ═════ D 第 3 件 orange-t-shirt（第 2 套）：按钮转、屏幕键盘 Shift+t ═════
+    print('D  orange-t-shirt：#btnSpin / 屏幕键盘 Shift')
+    ms, da = spin(page, 'btn', 'orange-t-shirt')
+    check('#btnSpin 可转，2.8–3.3 秒', 2800 <= ms <= 3300, f'{ms}ms')
+    page.keyboard.type('orange', delay=20); wait_stage(page, 'cloth')
+    for ch in 'tshirt': page.click(f'#kb .key[data-k="{ch}"]')
     page.wait_for_timeout(100)
-    c = cells('#cellsCloth')
-    check('4 打到第 5 个字母时还没判（没打满），第一个显示大写 T', [x['t'] for x in c][:1] == ['T'] and sum('locked' in x['cls'] for x in c) == 0, str([x['t'] for x in c]))
-    page.keyboard.press('t')
-    page.wait_for_timeout(200)
-    c = cells('#cellsCloth')
-    check('4 再打 1 个（共 6 个字母）：全绿，显示 T-shirt', ''.join(x['t'] for x in c) == 'T-shirt' and sum('locked' in x['cls'] for x in c) == 6, ''.join(x['t'] for x in c))
-    page.wait_for_selector('body[data-phase=idle]', timeout=8000)
-    # 屏幕键盘可点
-    spin(page, 'red-socks')
-    for ch in 'red': page.click(f'.key[data-k={ch}]')
-    page.wait_for_selector('#rowCloth.active', timeout=4000)
-    page.click('.key[data-k=s]'); page.click('.key[data-k=x]')   # x 是错的
-    page.wait_for_timeout(100)
-    c = cells('#cellsCloth')
-    check('4 屏幕键盘点击输入，也能判错（未打满不判）', [x['t'] for x in c] == ['s', 'x', '', '', ''] and sum('wrong' in x['cls'] for x in c) == 0)
-    page.click('.key[data-k=Backspace]'); page.click('.key[data-k=o]')
-    page.click('.key[data-k=c]'); page.click('.key[data-k=k]'); page.click('.key[data-k=s]')
-    page.wait_for_selector('body[data-phase=done]', timeout=4000)
-    check('4 屏幕键盘退格后补打完成', st(page)['worn'].get('socks') == 'red-socks')
-    page.wait_for_selector('body[data-phase=idle]', timeout=8000)
+    check('屏幕键盘不按 Shift 点 t（tshirt 全小写）→ 首格判错', 'wrong' in page.get_attribute('#cellsCloth .cell:nth-child(1)', 'class'))
+    page.wait_for_timeout(900)
+    page.click('#kb .key-shift')
+    check('点 Shift 后 aria-pressed=true', page.get_attribute('#kb .key-shift', 'aria-pressed') == 'true')
+    page.click('#kb .key[data-k="t"]')
+    check('Shift 后点 t → 填入大写 T，Shift 自动弹起', page.inner_text('#cellsCloth .cell:nth-child(1)') == 'T' and page.get_attribute('#kb .key-shift', 'aria-pressed') == 'false')
+    for ch in 'shirt': page.click(f'#kb .key[data-k="{ch}"]')
+    page.wait_for_selector('body[data-phase=done]', timeout=6000)
+    stars += 5; played.append('orange-t-shirt')
+    check('屏幕键盘拼完 +5（共 15）', st(page)['stars'] == 15 and page.inner_text('#starTotal') == '15')
+    check_counts(page, 'orange-t-shirt 后')
+    wait_back(page)
 
-    # ═════ 验收 5：Help 三档 ═════
-    print('验收 5  Help 三档')
-    spin(page, 'pink-cap')
-    audio_hits = lambda: len([1 for u, s in page.reqs if u.endswith('/audio/pink.mp3')])
-    n0 = audio_hits()
-    page.click('#btnHelp'); page.wait_for_timeout(500)
-    check('5 档①：朗读整个单词（请求了 audio/pink.mp3）', audio_hits() == n0 + 1 and page.evaluate("() => document.querySelectorAll('#helpPips i.on').length") == 1, f'请求 {n0}→{audio_hits()}')
-    check('5 档①不填任何字母', all(x['t'] == '' for x in cells('#cellsColour')))
-    page.click('#btnHelp'); page.wait_for_timeout(200)
-    c = cells('#cellsColour')
-    check('5 档②：自动填好第一个字母 p 并锁住', c[0]['t'] == 'p' and 'locked' in c[0]['cls'] and all(x['t'] == '' for x in c[1:]), str([(x['t'], x['cls']) for x in c[:2]]))
-    page.click('#btnHelp'); page.wait_for_timeout(300)
-    vis = lambda: page.evaluate("() => document.getElementById('peekColour').classList.contains('show')")
-    check('5 档③：偷看，显示完整单词', vis() and page.inner_text('#peekColour') == 'pink')
-    check('5 三档后 Help 按钮禁用', page.is_disabled('#btnHelp'))
-    page.wait_for_timeout(2200)
-    check('5 档③ 2.5 秒时仍显示', vis())
-    page.wait_for_timeout(1000)
-    check('5 档③ 3 秒后遮回', not vis())
-    check('5 用了 3 档 Help：这件最低保 1 星', page.evaluate("() => document.querySelectorAll('#itemStars .st.on').length") == 1)
-    page.keyboard.type('ink'); page.wait_for_selector('#rowCloth.active', timeout=4000)
-    page.keyboard.type('cap'); page.wait_for_selector('body[data-phase=done]', timeout=4000)
-    s = st(page)
-    check('5 最低保 ★：该件拿到 1 星且没有算进「无 Help 一次对」', s['stars'] >= 1)
-    page.wait_for_selector('body[data-phase=idle]', timeout=8000)
-
-    # ═════ 验收 3：完整一套（从头开始，forceNext 逐件） ═════
-    print('验收 3  一套 6 件')
-    page.evaluate("() => localStorage.clear()"); open_game(page)
-    t_set = time.time()
-    for k, iid in enumerate(SET1):
-        play_item(page, iid)
-        if k < 5:
-            check(f'3 第 {k+1} 件穿上：{iid}', st(page)['wornCount'] == k + 1 and st(page)['worn'].get(items(page)[iid]['type']) == iid)
-        if k == 4:
-            shot(page, 'dressing-1366x768-flow-5of6')
-    page.wait_for_selector('body[data-phase=celebrate]', timeout=6000)
+    # ═════ E 连续随机转：落点永远在第 1 套没收集过的几件里 ═════
+    print('E  随机落点 + 第 1 套凑满奖励')
+    page.click('#btnTilesOn')
+    check('切回 On：aria-pressed 切换', page.get_attribute('#btnTilesOn', 'aria-pressed') == 'true')
+    set0 = {i['id'] for i in page.evaluate('() => window.__dressing.sets[0]')}
+    while True:
+        s0 = st(page)
+        todo = set0 - set(s0['collected'])
+        if not todo: break
+        spin(page, 'wheel')
+        cur = st(page)['current']
+        ok = cur in todo
+        check(f'随机落点 {cur} 属于第 1 套且未收集过', ok, f'待收集 {sorted(todo)}')
+        if not page.is_visible('#tiles'): check('字母块 On 时答题中 #tiles 可见', False)
+        finish(page, IT[cur], 'tiles' if len(todo) % 2 else 'kb')
+        stars += 5; played.append(cur)
+        check_counts(page, f'{cur} 后')
+        check(f'{cur} 立刻出现在收藏', new_item_on_shelf(page, IT[cur]))
+        if len(todo) > 1:
+            wait_back(page)
+    # 现在 6 件齐 → 奖励
+    page.wait_for_selector('body[data-phase=reward]', timeout=6000)
+    check('第 1 套凑满 → 显示奖励视图 #viewReward', page.is_visible('#viewReward') and not page.is_visible('#viewAnswer'))
     page.wait_for_timeout(700)
-    lay = page.evaluate("""() => { const capy = document.getElementById('capy').getBoundingClientRect();
-      return [...document.querySelectorAll('.garment')].map(g => { const r = g.getBoundingClientRect(); return { layer: g.dataset.layer, hidden: g.hidden, cx: (r.left + r.width / 2 - capy.left) / capy.width, cy: (r.top + r.height / 2 - capy.top) / capy.height, w: r.width / capy.width }; }); }""")
-    vis_layers = [l['layer'] for l in lay if not l['hidden']]
-    check('3 穿满：卡比巴拉身上 7 个图层（6 件，袜子左右各一）全部显示', sorted(vis_layers) == sorted(['socks-l', 'socks-r', 'shoes', 'trousers', 'tshirt', 'jacket', 'cap']), str(vis_layers))
-    order = page.evaluate("() => [...document.querySelectorAll('.garment')].map(g => g.dataset.layer)")
-    check('3 图层顺序（下→上）socks → shoes → trousers → T-shirt → jacket → cap', order == ['socks-l', 'socks-r', 'shoes', 'trousers', 'tshirt', 'jacket', 'cap'], str(order))
-    pos = {l['layer']: l for l in lay}
-    check('3 位置：帽子在头部（上 15%）、袜鞋在脚（下 70% 以下）、裤子盖住腿、T恤在躯干', pos['cap']['cy'] < 0.15 and pos['shoes']['cy'] > 0.85 and pos['socks-l']['cy'] > 0.75 and 0.55 < pos['trousers']['cy'] < 0.75 and 0.35 < pos['tshirt']['cy'] < 0.6 and abs(pos['jacket']['cy'] - 0.48) < 0.1,
-          str({k: (round(v['cx'], 2), round(v['cy'], 2)) for k, v in pos.items()}))
-    check('3 庆祝：Well done! 与彩带，已存进 Collection（6/18）', page.inner_text('#doneTitle') == 'Well done!' and st(page)['collected'].__len__() == 6, page.inner_text('#colCount'))
-    shot(page, 'dressing-1366x768-3-fullset')
-    page.wait_for_selector('body[data-phase=idle]', timeout=8000)
-    page.wait_for_timeout(700)
-    s = st(page)
-    check('3 自动进入第二套：本套穿着清空、Collection 有 6 件', s['wornCount'] == 0 and len(s['collected']) == 6 and s['sets'] == 1, str(s))
-    check('3 卡比巴拉脱回光身（图层全部隐藏）', page.evaluate("() => [...document.querySelectorAll('.garment')].every(g => g.hidden)"))
-    check('3 提示换到第 2 套', 'Set 2' in page.inner_text('#idleHint'), page.inner_text('#idleHint'))
-    page.click('#btnCollection'); page.wait_for_timeout(300)
-    got = page.evaluate("() => document.querySelectorAll('.tile.got').length")
-    check('3 Collection 页：6 格彩色、12 格剪影', got == 6 and page.evaluate("() => document.querySelectorAll('.tile.lock').length") == 12, f'got={got}')
-    shot(page, 'dressing-1366x768-collection')
-    page.click('.tile.got'); page.wait_for_timeout(200)
-    check('3 点已收集的格子读词组（请求了音档）', any(u.endswith('.mp3') for u, s in page.reqs[-4:]))
-    page.click('#btnPlay'); page.wait_for_timeout(200)
-
-    # ═════ 验收 7：刷新后进度仍在 ═════
-    print('验收 7  刷新保留')
-    play_item(page, 'brown-cap'); play_item(page, 'blue-t-shirt')
+    img_vis = page.is_visible('#rewardImg')
+    grid_n = page.eval_on_selector_all('#rewardGrid img', 'e => e.length') if page.is_visible('#rewardGrid') else 0
+    check('奖励：#rewardImg 可见，或 #rewardGrid 兜底显示 6 件衣服', img_vis or grid_n == 6, f'rewardImg可见={img_vis} grid={grid_n}（图未生成时兜底属正常）')
+    check('state().rewarded 含第 1 套(0)', 0 in st(page)['rewarded'], str(st(page)['rewarded']))
+    check('星星 = 已拼件数 × 5（固定 +5）', st(page)['stars'] == stars == 5 * len(played), f"{st(page)['stars']} vs {stars}")
+    shot(page, 'desktop-5-reward')
+    page.click('#btnReward')
+    check('按 #btnReward 回到转盘', st(page)['phase'] == 'idle' and page.is_visible('#viewIdle') and not page.is_visible('#viewReward'))
+    check_counts(page, '第 1 套后')
+    # 刷新保留
     before = st(page)
     page.reload(); page.wait_for_selector('body[data-ready]'); page.wait_for_timeout(300)
     after = st(page)
-    keep = {k: after[k] for k in ('collected', 'worn', 'stars', 'colourOK', 'clothOK', 'sets')} == {k: before[k] for k in ('collected', 'worn', 'stars', 'colourOK', 'clothOK', 'sets')}
-    check('7 刷新后收集、本套穿着、星星、统计都还在', keep, f"stars {before['stars']}→{after['stars']}, collected {len(after['collected'])}, worn {list(after['worn'].values())}")
-    check('7 刷新后卡比巴拉身上还穿着、顶栏数字一致', page.evaluate("() => [...document.querySelectorAll('.garment')].filter(g => !g.hidden).length") == 2 and page.inner_text('#starTotal') == str(after['stars']) and page.inner_text('#wornCount') == '2/6')
-    # Reset 用页内确认框
-    page.click('#btnReset'); page.wait_for_timeout(200)
-    check('7 Reset 弹出页内确认框（不是 confirm()）', page.is_visible('#confirm') and page.dialogs == [])
-    page.click('#btnConfirmNo'); check('7 选「Keep playing」不清空', st(page)['stars'] == after['stars'])
-    page.click('#btnReset'); page.click('#btnConfirmYes'); page.wait_for_timeout(300)
-    s = st(page)
-    check('7 确认重置后全部清空', s['stars'] == 0 and s['collected'] == [] and s['worn'] == {} and page.dialogs == [])
-    # localStorage 坏掉不能卡住
-    page.evaluate("() => localStorage.setItem('tahun2-bi-dressing:v1', '{坏掉的json')")
-    page.reload(); page.wait_for_selector('body[data-ready]')
-    check('7 存档损坏时当新玩家继续，无报错', st(page)['stars'] == 0 and not [e for e in page.errors if 'pageerror' in e], str(page.errors[-2:]))
+    check('刷新后收集、星星、套奖励仍在', after['collected'] == before['collected'] and after['stars'] == before['stars'] and after['rewarded'] == before['rewarded'])
+    check('刷新后字母块选择保留（On）', after['tiles'] is True and page.get_attribute('#btnTilesOn', 'aria-pressed') == 'true')
+    page.click('#btnTilesOff'); page.reload(); page.wait_for_selector('body[data-ready]')
+    check('字母块 Off 刷新后保留', st(page)['tiles'] is False and page.get_attribute('#btnTilesOff', 'aria-pressed') == 'true')
+    page.click('#btnTilesOn')
+    shot(page, 'desktop-6-collection-set1')
+    # 不自动滚动整局统计
+    check('整局桌面页面无纵向滚动', layout_ok(page)['sh'] <= 768)
+    check('桌面整局 scrollY 始终为 0', page.evaluate('window.__mx') == 0, str(page.evaluate('window.__mx')))
 
-    # ═════ 验收 6：18 件完成页 ═════
-    print('验收 6  18 件完成')
-    pre = [i for i in ALL18 if i != 'green-shoes']
-    open_game(page, {'collected': pre, 'worn': {}, 'stars': 40, 'colourOK': 5, 'clothOK': 4, 'sets': 2})
-    check('6 预置 17 件：Collection 显示 17/18，未出现完成页', page.inner_text('#colCount') == '17/18' and not page.is_visible('#finale'))
-    for iid in ['brown-cap', 'red-t-shirt', 'blue-jacket', 'grey-trousers', 'black-socks', 'green-shoes']:
-        play_item(page, iid) if iid != 'green-shoes' else (spin(page, iid), solve_current(page))
-        if iid == 'green-shoes': break
-    page.wait_for_selector('body[data-phase=final]', timeout=8000)
-    page.wait_for_timeout(600)
-    check('6 第 18 件完成：出现 You collected all 18!', page.is_visible('#finale') and page.inner_text('#finaleTitle') == 'You collected all 18!')
-    check('6 完成页显示总星星，18 格图', int(page.inner_text('#finaleStars')) > 40 and len(page.query_selector_all('#finaleGrid img')) == 18, page.inner_text('#finaleStars'))
-    shot(page, 'dressing-1366x768-finale')
-    page.click('#btnAgain'); page.wait_for_timeout(500)
-    s = st(page)
-    check('6 Play again：收集、穿着、星星清空，回到转盘', not page.is_visible('#finale') and s['collected'] == [] and s['worn'] == {} and s['stars'] == 0 and s['phase'] == 'idle', str(s))
-    page.reload(); page.wait_for_selector('body[data-ready]')
-    check('6 刷新后不会再弹完成页', not page.is_visible('#finale') and st(page)['collected'] == [])
-
-    # ═════ 随机转盘：不落 Start/Finish、同套不重复类型、优先没收集过的 ═════
-    if not FAST:
-        print('随机转盘（两套，约 90 秒）')
-        open_game(page, {'collected': [], 'worn': {}, 'stars': 0})
-        seen = []; mismatch = []
-        for k in range(12):
-            page.click('#btnSpin'); page.wait_for_selector('body[data-phase=answer]', timeout=9000)
-            SPINS.append(int(page.evaluate("() => document.getElementById('wheelWrap').dataset.lastSpinMs")))
-            rot = page.evaluate("() => parseFloat(/rotate\\(([-\\d.]+)deg\\)/.exec(document.getElementById('wRot').style.transform)[1])")
-            idx = int((((-rot) % 360) + 360) % 360 // 18)
-            cur = st(page)['current']
-            seen.append(cur)
-            if idx != items(page)[cur]['n']: mismatch.append((cur, idx))
-            solve_current(page)
-            if k == 5: wait_set_done(page)
-        set1, set2 = seen[:6], seen[6:]
-        T = lambda ids: [items(page)[i]['type'] for i in ids]
-        check('随机：每套 6 件类型各不相同', len(set(T(set1))) == 6 and len(set(T(set2))) == 6, f'{T(set1)} / {T(set2)}')
-        check('随机：第二套 6 件全是没收集过的（颜色换了）', not set(set1) & set(set2), str(set(set1) & set(set2)))
-        check('随机：指针从未落在 Start／Finish 格（12 次指针下扇形序号都等于所抽物品序号 1–18）', not mismatch, str(mismatch))
-        s = st(page)
-        check('随机：两套走完后 Collection 12 件', len(s['collected']) == 12, str(len(s['collected'])))
-
-    ms = SPINS
-    check('2 全部测试中转盘时间（内部记录）都在 2.8–3.3 秒', all(2800 <= x <= 3300 for x in ms), f'共 {len(ms)} 次，最小 {min(ms)} ms，最大 {max(ms)} ms')
-    print(f'    转盘用时列表 ms: {ms}')
+    # ═════ F 第 2、3 套 & 全 18 件 ═════
+    if FAST:
+        print('F  第 2/3 套与 18 件（FAST：localStorage 预置）')
+        sets = page.evaluate('() => window.__dressing.sets'); ids = [[i['id'] for i in s] for s in sets]
+        page.close()
+        page = new_page(br)
+        open_game(page, {'collected': ids[0], 'rewarded': [0], 'stars': 30, 'muted': True, 'tiles': True})
+        spin(page, 'wheel'); cur = st(page)['current']
+        check('第 1 套已凑满时，落点落在第 2 套', set_of(page, cur) == 1, cur)
+        finish(page, IT[cur]); wait_back(page)
+        check_counts(page, '第 2 套第一件后')
+        page.close()
+        page = new_page(br)
+        open_game(page, {'collected': ids[0] + ids[1][:5], 'rewarded': [0], 'stars': 55, 'muted': True, 'tiles': True})
+        spin(page, 'wheel'); cur = st(page)['current']
+        check('第 2 套差 1 件时，落点就是那 1 件', cur == ids[1][5], cur)
+        finish(page, IT[cur])
+        page.wait_for_selector('body[data-phase=reward]', timeout=6000)
+        check('第 2 套凑满 → 奖励视图，rewarded 含 1', page.is_visible('#viewReward') and 1 in st(page)['rewarded'], str(st(page)['rewarded']))
+        page.click('#btnReward')
+        page.close()
+        page = new_page(br)
+        open_game(page, {'collected': ids[0] + ids[1] + ids[2][:3], 'rewarded': [0, 1], 'stars': 45 + 15 + 30 - 45, 'muted': True, 'tiles': True})
+        spin(page, 'wheel'); cur = st(page)['current']
+        check('前两套满时，落点落在第 3 套没收集过的', cur in ids[2][3:], cur)
+        page.close()
+        # 17 件预置 → 最后一件 → finale
+        page = new_page(br)
+        last = ids[2][5]
+        open_game(page, {'collected': ids[0] + ids[1] + ids[2][:5], 'rewarded': [0, 1], 'stars': 85, 'muted': True, 'tiles': True})
+        check('预置 17 件：#colCount 17/18、17 个 .tile.got', counts(page)['cc'] == '17/18' and counts(page)['got'] == 17)
+        check_counts(page, '预置 17 件'); check_locked_clean(page, '预置 17 件')
+        spin(page, 'wheel'); check('只剩 1 件时落点就是它', st(page)['current'] == last, st(page)['current'])
+        finish(page, IT[last])
+        page.wait_for_selector('body[data-phase=reward]', timeout=6000)
+        check('第 3 套凑满 → 奖励；按钮 "See my stars"', page.is_visible('#viewReward') and page.inner_text('#btnReward').strip() == 'See my stars')
+        check('18 件收集', counts(page)['cc'] == '18/18' and counts(page)['lock'] == 0)
+    else:
+        print('F  第 2、3 套全程随机实玩（完整 18 件）')
+        for k in (1, 2):
+            setk = {i['id'] for i in page.evaluate(f'() => window.__dressing.sets[{k}]')}
+            while True:
+                todo = setk - set(st(page)['collected'])
+                if not todo: break
+                spin(page, 'wheel'); cur = st(page)['current']
+                check(f'随机落点 {cur} 属于第 {k+1} 套且未收集', cur in todo and set_of(page, cur) == k, f'待 {sorted(todo)}')
+                finish(page, IT[cur]); stars += 5
+                check_counts(page, f'{cur} 后')
+                if len(todo) > 1: wait_back(page)
+            page.wait_for_selector('body[data-phase=reward]', timeout=6000)
+            check(f'第 {k+1} 套凑满 → 奖励视图', page.is_visible('#viewReward') and k in st(page)['rewarded'])
+            if k == 1: page.click('#btnReward')
+    # finale
+    if not FAST: pass
+    check('按奖励钮（See my stars）→ 弹出 #finale', (page.click('#btnReward') or True) and page.is_visible('#finale'))
+    check('#finale 显示 18 张图与星星数', len(page.query_selector_all('#finaleGrid img')) == 18 and page.inner_text('#finaleStars').strip().isdigit())
+    shot(page, 'desktop-7-finale')
+    check('18 件：state().collected=18、rewarded 含 0,1,2', len(st(page)['collected']) == 18 and set(st(page)['rewarded']) == {0, 1, 2}, str(st(page)['rewarded']))
+    page.reload(); page.wait_for_selector('body[data-ready]'); page.wait_for_timeout(300)
+    check('刷新后 18 件全集仍在、finale 重新弹出', len(st(page)['collected']) == 18 and page.is_visible('#finale'))
+    page.click('#btnAgain'); page.wait_for_timeout(300)
+    s = st(page); c = counts(page)
+    check('#btnAgain 清空：0/18、0 星、finale 关闭、回到转盘', s['collected'] == [] and s['stars'] == 0 and s['rewarded'] == [] and c['cc'] == '0/18' and c['got'] == 0 and not page.is_visible('#finale') and s['phase'] == 'idle', str(s))
+    check_locked_clean(page, '重玩后')
+    check('桌面全程没有 alert/confirm/prompt', page.dialogs == [], str(page.dialogs))
+    miss = [u for u, s_ in page.reqs if s_ == 404]
+    other = [e for e in page.errors if '404' not in e]
+    check('桌面全程无控制台 error（outfit-N.webp 尚未生成的 404 不算）', not other and all('outfit-' in u for u in miss), f'{other} 404={[u.split("/")[-1] for u in miss]}')
+    check('桌面全程请求只在本机（除 track-use.js）', not [u for u, s_ in page.reqs if HOST not in u and 'track-use.js' not in u])
     page.close()
 
-    # ═════ 验收 8：三个布局的截图与量测 ═════
-    print('验收 8  三种布局截图')
-    layouts = [('1366x768', 1366, 768, False), ('1180x820', 1180, 820, True), ('390x844', 390, 844, True)]
-    report = {}
-    for name, w, h, touch in layouts:
-        pg = new_page(br, w, h, dsf=1, touch=touch)
-        open_game(pg)
-        shot(pg, f'dressing-{name}-1-wheel')
-        pg.evaluate("() => window.__dressing.forceNext('grey-trousers')")
-        pg.click('#btnSpin'); pg.wait_for_selector('body[data-phase=answer]', timeout=9000)
-        pg.keyboard.type('grey'); pg.wait_for_selector('#rowCloth.active', timeout=4000); pg.keyboard.type('tro')
-        pg.wait_for_timeout(500)
-        shot(pg, f'dressing-{name}-2-answering')
-        m = pg.evaluate("""() => { const r = s => { const e = document.querySelector(s); if (!e) return null; const b = e.getBoundingClientRect(); return { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height), bottom: Math.round(b.bottom), right: Math.round(b.right) }; };
-          const keys = [...document.querySelectorAll('.key')].map(k => k.getBoundingClientRect());
-          const btns = [...document.querySelectorAll('.btn')].filter(b => b.offsetParent).map(b => b.getBoundingClientRect());
-          const cellsB = r('#rowCloth'), kb = r('#kb');
-          return { scrollW: document.documentElement.scrollWidth, innerW: innerWidth, innerH: innerHeight, scrollY: Math.round(scrollY), docH: document.documentElement.scrollHeight,
-                   wheel: r('#wheelWrap'), panel: r('#panel'), kb, rowCloth: cellsB, minKeyW: Math.round(Math.min(...keys.map(k => k.width))), minKeyH: Math.round(Math.min(...keys.map(k => k.height))),
-                   minBtnH: Math.round(Math.min(...btns.map(b => b.height))), minBtnW: Math.round(Math.min(...btns.map(b => b.width))),
-                   keysOverCells: kb.y < cellsB.bottom, minCellW: Math.round(Math.min(...[...document.querySelectorAll('#cellsCloth .cell:not(.fixed)')].map(c => c.getBoundingClientRect().width))) }; }""")
-        report[name] = m
-        check(f'8 {name}：无横向溢出', m['scrollW'] <= m['innerW'], f"scrollWidth {m['scrollW']} / {m['innerW']}")
-        check(f'8 {name}：屏幕键盘不挡输入格', not m['keysOverCells'], f"输入格底 {m['rowCloth']['bottom']}，键盘顶 {m['kb']['y']}")
-        check(f'8 {name}：键盘完整在可视范围内', m['kb']['bottom'] <= m['innerH'] + 1, f"键盘底 {m['kb']['bottom']} / 视口高 {m['innerH']}（页面已滚动 {m['scrollY']}px）")
-        print(f"    {name}: 转盘 {m['wheel']['w']}px，面板 {m['panel']['w']}×{m['panel']['h']}，最小键 {m['minKeyW']}×{m['minKeyH']}，最小按钮 {m['minBtnW']}×{m['minBtnH']}，输入格最小宽 {m['minCellW']}")
-        # 第三张：穿满一套（真实流程只在 1366 测过；这里用测试钩子直接穿满，只为看布局）
-        pg.evaluate("() => window.__dressing.debugWear({cap: 'pink-cap', tshirt: 'orange-t-shirt', jacket: 'green-jacket', trousers: 'black-trousers', socks: 'purple-socks', shoes: 'red-shoes'})")
-        pg.evaluate("() => { document.body.dataset.phase = 'idle'; document.getElementById('viewAnswer').hidden = true; document.getElementById('viewIdle').hidden = false; window.scrollTo(0, 0); }")
-        pg.wait_for_timeout(300)
-        ov = pg.evaluate("() => [...document.querySelectorAll('#strip .slot')].filter(s => { const a = s.getBoundingClientRect(), b = s.querySelector('img').getBoundingClientRect(); return b.top < a.top - 1 || b.bottom > a.bottom + 1 || b.left < a.left - 1 || b.right > a.right + 1; }).length")
-        check(f'8 {name}：这套的 6 个小格里图都没溢出', ov == 0, f'溢出 {ov} 个')
-        shot(pg, f'dressing-{name}-3-fullset')
-        errs = [e for e in pg.errors]
-        check(f'8 {name}：无控制台红字', errs == [], str(errs))
-        pg.close()
-    json.dump(report, open(os.path.join(OUT, 'layout-report.json'), 'w'), indent=1)
-
-    # ═════ 验收 10：着色总览图 ═════
-    print('验收 10  着色总览')
-    r = subprocess.run([sys.executable, os.path.join(HERE, 'scripts', 'tinted-overview.py')], capture_output=True, text=True)
-    ov = os.path.join(OUT, 'tinted-18.png')
-    check('10 总览图已生成', r.returncode == 0 and os.path.getsize(ov) > 20000, r.stderr[-200:] if r.returncode else f'{os.path.getsize(ov)//1024} KB')
-    page = new_page(br)
+    # ═════ G 手机直立 390×844 ═════
+    print('G  手机直立 390×844')
+    page = new_page(br, 390, 844, touch=True)
     open_game(page)
-    mean = page.evaluate("""() => { const D = window.__dressing, out = {};
-      for (const it of D.items) { const c = D.wheelIcon(it, 70), x = c.getContext('2d'), d = x.getImageData(0, 0, c.width, c.height).data;
-        // 只取衣服本体（不透明且不是白色贴纸边）的平均色
-        let r = 0, g = 0, b = 0, n = 0; for (let i = 0; i < d.length; i += 4) { if (d[i + 3] < 250) continue; if (d[i] > 235 && d[i + 1] > 235 && d[i + 2] > 225) continue; r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; }
-        out[it.id] = [r / n, g / n, b / n, it.color]; }
-      return out; }""")
-    def rgb2lab(c):
-        def f(u):
-            u /= 255; u = u / 12.92 if u <= .04045 else ((u + .055) / 1.055) ** 2.4; return u
-        r, g, b = f(c[0]), f(c[1]), f(c[2])
-        X = (.4124 * r + .3576 * g + .1805 * b) / .95047; Y = (.2126 * r + .7152 * g + .0722 * b); Z = (.0193 * r + .1192 * g + .9505 * b) / 1.08883
-        h = lambda t: t ** (1 / 3) if t > .008856 else 7.787 * t + 16 / 116
-        return (116 * h(Y) - 16, 500 * (h(X) - h(Y)), 200 * (h(Y) - h(Z)))
-    lab = {k: rgb2lab(v[:3]) for k, v in mean.items()}
-    def dE(a, b): return sum((x - y) ** 2 for x, y in zip(lab[a], lab[b])) ** .5
-    groups = {'grey/black/brown': ['grey-trousers', 'grey-cap', 'black-socks', 'black-trousers', 'brown-cap', 'brown-jacket'],
-              'pink/red/orange': ['pink-cap', 'red-t-shirt', 'red-shoes', 'red-socks', 'orange-t-shirt']}
-    for gname, ids in groups.items():
-        worst = None
-        for i, a in enumerate(ids):
-            for b in ids[i + 1:]:
-                if mean[a][3] == mean[b][3]: continue
-                d = dE(a, b)
-                if worst is None or d < worst[0]: worst = (d, a, b)
-        check(f'10 {gname}：70px 图标平均色两两 ΔE76 ≥ 20（不同颜色之间）', worst[0] >= 20, f'最小 ΔE={worst[0]:.1f}（{worst[1]} vs {worst[2]}）')
+    check('手机冷启动无 error', page.errors == [], str(page.errors))
+    check('手机无横向滚动（idle）', layout_ok(page)['sw'] <= 390, str(layout_ok(page)['sw']))
+    shot(page, 'mobile-1-idle')
+    page.evaluate('window.__mx = 0')
+    ms, da = spin(page, 'wheel', 'blue-jacket')
+    check('手机点转盘：2.8–3.3 秒、无自动读音', 2800 <= ms <= 3300 and da == 0, f'{ms}ms 音档增量 {da}')
+    check('手机答题（字母块）内容没超出面板', contained(page) == [], str(contained(page)))
+    check('手机答题无横向滚动', layout_ok(page)['sw'] <= 390, str(layout_ok(page)['sw']))
+    shot(page, 'mobile-2-answer-tiles')
+    page.evaluate("document.getElementById('btnTilesOff').click()"); page.wait_for_timeout(200)
+    check('手机答题（屏幕键盘）内容没超出面板', contained(page) == [], str(contained(page)))
+    check('手机答题（屏幕键盘）无横向滚动', layout_ok(page)['sw'] <= 390, str(layout_ok(page)['sw']))
+    shot(page, 'mobile-3-answer-keyboard')
+    page.keyboard.type('blue', delay=30); wait_stage(page, 'cloth')
+    page.keyboard.type('jacket', delay=30)
+    page.wait_for_selector('body[data-phase=done]', timeout=6000); wait_back(page)
+    check('手机：blue jacket 收进收藏，计数一致', new_item_on_shelf(page, IT['blue-jacket']))
+    check_counts(page, '手机 blue-jacket 后')
+    mx = page.evaluate('window.__mx')
+    check('手机：从点转盘到答完，scrollY 始终为 0', mx == 0, f'最大 scrollY = {mx}')
+    sh_ = page.evaluate("document.documentElement.scrollHeight"); ih_ = page.evaluate("innerHeight")
+    page.evaluate("document.getElementById('collection').scrollIntoView()"); page.wait_for_timeout(200)
+    shot(page, 'mobile-4-collection')
+    check('手机：收藏在转盘面板下方（可纵向滚动，预期）', page.evaluate("document.getElementById('collection').getBoundingClientRect().top >= 0 || scrollY > 0") and sh_ >= ih_, f'scrollHeight {sh_} / {ih_}')
+    wide = page.evaluate("[...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > innerWidth + 1).slice(0, 6).map(e => (e.id || (e.className.baseVal ?? e.className)) + ':' + Math.round(e.getBoundingClientRect().right))")
+    check('手机无横向滚动（收藏）', layout_ok(page)['sw'] <= 390, f"scrollWidth={layout_ok(page)['sw']} 超宽元素 {wide}")
+    check('手机收藏 18 格、每格独立（报告实际列×排；手机不强求 6×3）', layout_ok(page)['cols'] * layout_ok(page)['rows'] == 18, f"{layout_ok(page)['cols']} 列 × {layout_ok(page)['rows']} 排")
+    check('手机无 dialog／error', page.dialogs == [] and page.errors == [], str(page.errors))
+    page.close()
+
+    # ═════ H iPad 横屏 1180×820 ═════
+    print('H  iPad 横屏 1180×820')
+    page = new_page(br, 1180, 820, touch=True)
+    open_game(page)
+    shot(page, 'ipad-1-idle')
+    L = layout_ok(page)
+    check('iPad 无横向滚动', L['sw'] <= 1180, str(L['sw']))
+    check('iPad 页面无纵向滚动', L['sh'] <= L['ih'], f"{L['sh']} vs {L['ih']}")
+    check('iPad 左右同高', abs(L['ph'] - L['ch']) <= 2, f"{L['ph']:.0f} vs {L['ch']:.0f}")
+    page.evaluate('window.__mx = 0')
+    spin(page, 'wheel', 'grey-trousers')
+    check('iPad 答题（字母块）没超出面板、无横向滚动', contained(page) == [] and layout_ok(page)['sw'] <= 1180, str(contained(page)))
+    check('iPad 答题无纵向滚动', layout_ok(page)['sh'] <= layout_ok(page)['ih'], str(layout_ok(page)['sh']))
+    shot(page, 'ipad-2-answer-tiles')
+    page.evaluate("document.getElementById('btnTilesOff').click()"); page.wait_for_timeout(200)
+    check('iPad 答题（屏幕键盘）没超出面板', contained(page) == [], str(contained(page)))
+    shot(page, 'ipad-3-answer-keyboard')
+    page.keyboard.type('grey', delay=30); wait_stage(page, 'cloth'); page.keyboard.type('trousers', delay=30)
+    page.wait_for_selector('body[data-phase=done]', timeout=6000); wait_back(page)
+    check('iPad：grey trousers 收进收藏，计数一致', new_item_on_shelf(page, IT['grey-trousers']))
+    check_counts(page, 'iPad grey-trousers 后')
+    check('iPad：scrollY 始终为 0', page.evaluate('window.__mx') == 0, str(page.evaluate('window.__mx')))
+    shot(page, 'ipad-4-collection')
+    check('iPad 无 dialog／error', page.dialogs == [] and page.errors == [], str(page.errors))
     page.close()
     br.close()
 
-print('\n失败数：', fails)
-sys.exit(1 if fails else 0)
+print(f'\n共 {total} 项，通过 {total - fails}，失败 {fails}')
+raise SystemExit(1 if fails else 0)

@@ -1,25 +1,27 @@
 # The Dressing Game · 交接
 
 ## ⏯️ 目前做到哪
-v1.0 已上线 https://tahun2-bi-dressing.vercel.app ，Hub 已上架（2026-10-11）。push main 即自动部署。
+**v2.0（2026-10-13）**：照老师的 Gemini 原版概念重做玩法（第一版概念不对，老师说「太怪、原版比较好」）。线上 https://tahun2-bi-dressing.vercel.app ，push main 即自动部署。规格见 `SPEC.md` 顶部 12 条（**改动前先对照**）。
 
 ## 🚦 目前状态
-- 玩法：课本转盘（3 秒）→ 拼颜色词 → 拼衣服词 → 卡比巴拉穿上；一套 6 件，18 件全收集。规格见 `SPEC.md`。
-- 测试：`FAST=1 python3 test-e2e.py`（81 项通过）。
-- 课本出处：页码待补。DSKP：BI 4.3.2，未核对官方 PDF，未进 dskp-index。
+- 玩法：左转盘 5／右收藏 7 同高一屏；点转盘就转 → 拼颜色 → 拼衣服 → 解锁进收藏（一件件，未拼写 Locked）。字母块 On／Off 学生自选、不扣星；星星每件 +5；全小写只有 T-shirt 的 T 大写；默认不读音（学生自己点喇叭，拼完读一次）。
+- 卡比巴拉：一整套（课本每 6 格＝一套，共 3 套）凑满时出现整图 `assets/outfit-1/2/3.webp`（cx-draw 生成，原稿在 `assets/src/outfits/`，未入 git；`scripts/prep-outfits.py` 去底转 webp）。
+- 测试：`FAST=1 python3 test-e2e.py`（126 项通过）；不加 FAST 约多 90 秒（实玩 18 件）。
 
 ## ➡️ 下一步
-1. 老师本机试玩反馈（声音、实体键盘手感、3 秒转盘节奏）。
-2. 手机直立屏幕键盘键宽 34px（<44px）；收集页深色模式没看过。
-3. 长裤贴在卡比巴拉身上腿部较短，必要时用生图重画穿长裤的底图。
+1. 老师试玩 v2，重点看：①「电脑版 keyboard layout 不对」到底指哪里（现为 qwerty 三排小写＋Shift＋退格，未确认，请他给截图）②拼完整件会自动读一次 phrase——若他要「完全只在点了才读」，改 `finishItem` 里的 `say(it.id)` 一行。
+2. 手机直立收藏是 3 列×6 排（窄屏放不下 6 列），电脑／平板是 6×3。
+3. 课本页码待补；DSKP 4.3.2 未核对官方 PDF。
+4. `assets/capybara.webp`、`socks-l/r.webp` 已不用（旧穿衣系统），可搬去 `~/Documents/待删除/`。
 
 ## ⚠️ 注意事项
-- 衣服是白底图（`assets/src/`），`scripts/prep-assets.py` 去底，运行时着色；改素材后重跑。
-- 音档：改 `content/voice-lines.json` 后跑 `gen-voice.py`。
+- 老师否决了「卡比巴拉分层叠图／真的穿上」（对位难、屏幕跑位）——别再提；只做整套整图。
+- 程序不得自己滚动页面（老师点名「荧幕摇晃」）。
+- Documents 在 iCloud 会逐出文件：读不出来先 `brctl download <绝对路径>`（git、app.js 都碰过）。
 - 本机测试：`python3 -m http.server 8791 --bind 127.0.0.1`
 
 ## 🕐 最后更新
-2026-10-11 · Claude Sonnet 5.5 @ Mac · Git：✅ 已推（工具仓库 `cd065bb` 之后无新变动；Hub `aed0358`）
+2026-10-13 · Claude Sonnet 5.5 @ Mac · Git：见下方提交
 
-## 💰 开发用量与费用（2026-10-11）
-首次开发上线：116 轮，输入 242、输出约 5.5 万（下限）、缓存写约 107 万、缓存读约 1,787 万 token。**实际花费 US$8.24**（Claude Code 状态栏，API 等价金额，老师走订阅额度）；脚本估算 $6.60 偏低。逐笔与总花费见 `../COST-LOG.md`，以后每次调整都要再记一笔。
+## 💰 开发用量与费用
+首次开发（10-11）实际 US$8.24。v2 改版（10-13）未取得状态栏金额，待补进 `../COST-LOG.md`。

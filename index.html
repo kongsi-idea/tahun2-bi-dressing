@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>The Dressing Game · Get Dressed!</title>
-  <meta name="description" content="Tahun 2 English, Get Dressed!: spin the wheel, spell the colour and the clothes, and dress the capybara.">
+  <meta name="description" content="Tahun 2 English, Get Dressed!: spin the wheel, then spell the colour and the clothes.">
   <link rel="preload" href="fonts/andika-700.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="styles.css">
 <script src="https://kongsi-idea.vercel.app/data/track-use.js" data-slug="tahun2-bi-dressing" defer></script>
 </head>
-<body data-view="play" data-phase="idle">
+<body data-phase="idle">
 <div class="app">
 
   <!-- ── 顶栏 ───────────────────────────── -->
@@ -21,20 +21,18 @@
         <svg class="ico ico-star" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-star"/></svg>
         <b id="starTotal">0</b>
       </div>
-      <div class="chip chip-set" aria-live="polite">
-        <span class="chip-label">This set</span>
-        <span class="dots" id="setDots" aria-hidden="true"></span>
-        <b id="wornCount">0/6</b>
+      <div class="chip" aria-live="polite">
+        <span class="chip-label">Spelled</span>
+        <b id="colCount">0/18</b>
       </div>
     </div>
 
     <nav class="tools" aria-label="Menu">
-      <button class="btn btn-wood" id="btnPlay" type="button" aria-label="Back to the game">
-        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-wheel"/></svg><span class="lbl">Play</span>
-      </button>
-      <button class="btn btn-wood" id="btnCollection" type="button" aria-label="Open my collection">
-        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-wardrobe"/></svg><span class="lbl">Collection</span><b class="count" id="colCount">0/18</b>
-      </button>
+      <div class="seg" role="group" aria-label="Letter blocks">
+        <span class="seg-label">Letter blocks</span>
+        <button class="seg-btn" id="btnTilesOn" type="button" aria-pressed="true">On</button>
+        <button class="seg-btn" id="btnTilesOff" type="button" aria-pressed="false">Off</button>
+      </div>
       <button class="btn btn-wood btn-icon" id="btnSound" type="button" aria-label="Sound on" aria-pressed="false">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-speaker"/></svg>
       </button>
@@ -44,119 +42,77 @@
     </nav>
   </header>
 
-  <!-- ── 游戏场景 ───────────────────────── -->
+  <!-- ── 游戏场景：左 转盘／答题（5），右 收藏（7），同高 ── -->
   <main class="stage" id="stage">
-
-    <section class="wheel-col" aria-label="Wheel">
-      <div class="wheel-wrap" id="wheelWrap">
-        <div class="wheel-shadow" aria-hidden="true"></div>
-        <canvas class="wl wl-base" id="wBase" width="1280" height="1280" aria-hidden="true"></canvas>
-        <canvas class="wl wl-rot" id="wRot" width="1280" height="1280" aria-hidden="true"></canvas>
-        <canvas class="wl wl-top" id="wTop" width="1280" height="1280" aria-hidden="true"></canvas>
-
-        <div class="hub" id="hub">
-          <div class="capy" id="capy" role="img" aria-label="Capybara wearing the clothes you have won">
-            <div class="capy-floor" aria-hidden="true"></div>
-            <img class="capy-body" src="assets/capybara.webp" alt="" draggable="false">
-            <img class="garment g-socks-l" data-layer="socks-l" alt="" draggable="false" hidden>
-            <img class="garment g-socks-r" data-layer="socks-r" alt="" draggable="false" hidden>
-            <img class="garment g-shoes" data-layer="shoes" alt="" draggable="false" hidden>
-            <img class="garment g-trousers" data-layer="trousers" alt="" draggable="false" hidden>
-            <img class="garment g-tshirt" data-layer="tshirt" alt="" draggable="false" hidden>
-            <img class="garment g-jacket" data-layer="jacket" alt="" draggable="false" hidden>
-            <img class="garment g-cap" data-layer="cap" alt="" draggable="false" hidden>
-          </div>
-        </div>
-
-        <svg class="pointer" id="pointer" viewBox="0 0 80 110" aria-hidden="true">
-          <defs>
-            <linearGradient id="pg1" x1="0" x2="1" y1="0" y2="0">
-              <stop offset="0" stop-color="#FF8A74"/><stop offset=".45" stop-color="#E4503C"/><stop offset="1" stop-color="#A92B1D"/>
-            </linearGradient>
-          </defs>
-          <ellipse cx="44" cy="100" rx="13" ry="4.5" fill="#2a1408" opacity=".28"/>
-          <path d="M40 98 C36 86 10 62 10 38 A30 30 0 1 1 70 38 C70 62 44 86 40 98 Z" fill="url(#pg1)" stroke="#8C2417" stroke-width="3" stroke-linejoin="round"/>
-          <ellipse cx="29" cy="26" rx="7" ry="13" fill="#fff" opacity=".55" transform="rotate(18 29 26)"/>
-          <circle cx="40" cy="36" r="9" fill="#FFF3DC" stroke="#8C2417" stroke-width="2.5"/>
-        </svg>
-      </div>
-    </section>
 
     <section class="panel" id="panel" aria-live="polite">
 
-      <!-- 待转盘 -->
+      <!-- 转盘：点转盘就转 -->
       <div class="view view-idle" id="viewIdle">
-        <p class="panel-hint" id="idleHint">Spin the wheel!</p>
-        <button class="btn btn-spin" id="btnSpin" type="button">
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-wheel"/></svg>
-          <span>SPIN</span>
-        </button>
-        <p class="space-tip"><kbd>Space</kbd> works too</p>
-
-        <div class="wardrobe-strip" id="strip" aria-label="This set"></div>
-
-        <div class="mini-stats">
-          <div class="mini"><span>Colours</span><b id="okColour">0</b></div>
-          <div class="mini"><span>Clothes</span><b id="okCloth">0</b></div>
+        <div class="wheel-wrap" id="wheelWrap">
+          <div class="wheel-shadow" aria-hidden="true"></div>
+          <canvas class="wl wl-base" id="wBase" width="1280" height="1280" aria-hidden="true"></canvas>
+          <canvas class="wl wl-rot" id="wRot" width="1280" height="1280" aria-hidden="true"></canvas>
+          <canvas class="wl wl-top" id="wTop" width="1280" height="1280" aria-hidden="true"></canvas>
+          <div class="hub" id="hub"><button class="hub-spin" id="btnSpin" type="button" aria-label="Spin the wheel">SPIN</button></div>
+          <svg class="pointer" id="pointer" viewBox="0 0 80 110" aria-hidden="true">
+            <defs>
+              <linearGradient id="pg1" x1="0" x2="1" y1="0" y2="0">
+                <stop offset="0" stop-color="#FF8A74"/><stop offset=".45" stop-color="#E4503C"/><stop offset="1" stop-color="#A92B1D"/>
+              </linearGradient>
+            </defs>
+            <ellipse cx="44" cy="100" rx="13" ry="4.5" fill="#2a1408" opacity=".28"/>
+            <path d="M40 98 C36 86 10 62 10 38 A30 30 0 1 1 70 38 C70 62 44 86 40 98 Z" fill="url(#pg1)" stroke="#8C2417" stroke-width="3" stroke-linejoin="round"/>
+            <ellipse cx="29" cy="26" rx="7" ry="13" fill="#fff" opacity=".55" transform="rotate(18 29 26)"/>
+            <circle cx="40" cy="36" r="9" fill="#FFF3DC" stroke="#8C2417" stroke-width="2.5"/>
+          </svg>
         </div>
+        <p class="space-tip" id="idleHint">Click the wheel to spin! <kbd>Space</kbd> works too</p>
       </div>
 
       <!-- 答题 -->
       <div class="view view-answer" id="viewAnswer" hidden>
         <div class="ask-head">
-          <div class="item-tag" id="itemTag"><canvas id="itemPic" width="360" height="360" aria-hidden="true"></canvas></div>
-          <div class="ask-side">
-            <p class="step-line" id="stepLine">Spell the <b>colour</b></p>
-            <div class="item-stars" id="itemStars" aria-label="Stars for this one"></div>
-          </div>
-          <button class="btn btn-teal btn-round" id="btnSay" type="button" aria-label="Listen">
+          <div class="item-tag" id="itemTag"><canvas id="itemPic" width="420" height="420" aria-hidden="true"></canvas></div>
+          <p class="step-line" id="stepLine">Spell the <b>colour</b></p>
+          <button class="btn btn-teal btn-round" id="btnSay" type="button" aria-label="Listen to the word">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-speaker"/></svg>
           </button>
         </div>
-
         <div class="words" id="words">
-          <div class="word-row" id="rowColour" data-word="colour">
-            <span class="word-cap">Colour</span>
-            <div class="cells" id="cellsColour"></div>
-            <div class="peek" id="peekColour" aria-hidden="true"></div>
-          </div>
-          <div class="word-row" id="rowCloth" data-word="cloth">
-            <span class="word-cap">Clothes</span>
-            <div class="cells" id="cellsCloth"></div>
-            <div class="peek" id="peekCloth" aria-hidden="true"></div>
-          </div>
+          <div class="word-row" id="rowColour"><span class="word-cap">Colour</span><div class="cells" id="cellsColour"></div></div>
+          <div class="word-row" id="rowCloth"><span class="word-cap">Clothes</span><div class="cells" id="cellsCloth"></div></div>
         </div>
-
-        <div class="help-row">
-          <button class="btn btn-sun" id="btnHelp" type="button">
-            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-help"/></svg>
-            <span class="help-lbl" id="helpLbl">Help</span>
-            <span class="pips" id="helpPips" aria-hidden="true"><i></i><i></i><i></i></span>
-          </button>
-          <p class="msg" id="msg" role="status"></p>
-        </div>
-
+        <p class="msg" id="msg" role="status"></p>
+        <div class="tiles" id="tiles" role="group" aria-label="Letter blocks"></div>
         <div class="kb" id="kb" role="group" aria-label="Keyboard"></div>
       </div>
 
-      <!-- 一件完成 / 一套庆祝 -->
+      <!-- 一件拼对 -->
       <div class="view view-done" id="viewDone" hidden>
-        <p class="done-title" id="doneTitle">Great!</p>
+        <p class="done-title">Great!</p>
         <div class="done-pic" id="donePic"></div>
-        <div class="done-stars" id="doneStars"></div>
-        <button class="btn btn-teal" id="btnNextSet" type="button" hidden>Next set</button>
+        <p class="done-name" id="doneName"></p>
+      </div>
+
+      <!-- 一套 6 件凑满：卡比巴拉穿上整套 -->
+      <div class="view view-reward" id="viewReward" hidden>
+        <p class="done-title" id="rewardTitle">Well done!</p>
+        <div class="reward-pic" id="rewardPic">
+          <img id="rewardImg" alt="" draggable="false" hidden>
+          <div class="reward-grid" id="rewardGrid" hidden></div>
+        </div>
+        <p class="done-name" id="rewardSub"></p>
+        <button class="btn btn-teal" id="btnReward" type="button">Keep going</button>
       </div>
     </section>
-  </main>
 
-  <!-- ── Collection ─────────────────────── -->
-  <section class="collection" id="collection" aria-label="My collection">
-    <div class="shelf-head">
-      <h2>My Collection</h2>
-      <p id="colSub">0 of 18</p>
-    </div>
-    <div class="shelf" id="shelf"></div>
-  </section>
+    <!-- 收藏：常驻右侧，不用滚动 -->
+    <section class="collection" id="collection" aria-label="My spelled collection">
+      <div class="shelf-head"><h2>My Spelled Collection</h2><p id="colSub">0 of 18</p></div>
+      <div class="shelf" id="shelf"></div>
+    </section>
+  </main>
 
   <footer class="foot">Tahun 2 English · Get Dressed!</footer>
 </div>
@@ -169,7 +125,6 @@
     <p class="finale-stars"><svg class="ico ico-star" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-star"/></svg><b id="finaleStars">0</b> stars</p>
     <div class="finale-btns">
       <button class="btn btn-coral" id="btnAgain" type="button">Play again</button>
-      <button class="btn btn-wood" id="btnSeeCol" type="button">See my collection</button>
     </div>
   </div>
 </div>
@@ -196,11 +151,9 @@
     <symbol id="i-mute" viewBox="0 0 24 24"><path d="M4 9.5h3.6L12.5 5v14l-4.9-4.5H4z" fill="currentColor"/><path d="M16 9.5l5 5m0-5l-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
     <symbol id="i-reset" viewBox="0 0 24 24"><path d="M5 12a7 7 0 107-7H8.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M11 1.8L7.6 5 11 8.2" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-wheel" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="2.6" fill="currentColor"/></symbol>
-    <symbol id="i-wardrobe" viewBox="0 0 24 24"><rect x="3.5" y="2.5" width="17" height="17" rx="2" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M12 2.5v17" stroke="currentColor" stroke-width="2"/><circle cx="9.6" cy="11.5" r="1.1" fill="currentColor"/><circle cx="14.4" cy="11.5" r="1.1" fill="currentColor"/><path d="M6 21.5h2.5M15.5 21.5H18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
-    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M9.2 9.4a2.9 2.9 0 115 1.9c-.9.9-2.2 1.4-2.2 2.9" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/><circle cx="12" cy="17" r="1.35" fill="currentColor"/></symbol>
-    <symbol id="i-back" viewBox="0 0 24 24"><path d="M3 12l5-5v3h7.5a5.5 5.5 0 010 11H10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 12l5 5v-3" fill="none"/></symbol>
     <symbol id="i-bksp" viewBox="0 0 24 24"><path d="M8.2 5.5h11.3A1.5 1.5 0 0121 7v10a1.5 1.5 0 01-1.5 1.5H8.2L2.6 12z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12.4 9.4l4.8 5.2m0-5.2l-4.8 5.2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
-    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.7-6.5 10-6.5S22 12 22 12s-3.7 6.5-10 6.5S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="2.2"/><circle cx="12" cy="12" r="3.2" fill="currentColor"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.2" fill="currentColor"/><path d="M8 10.5V8a4 4 0 018 0v2.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-shift" viewBox="0 0 24 24"><path d="M12 3.5l8 8.6h-4.8v7.4H8.8v-7.4H4z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M4.5 12.5l5 5 10-11" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   </defs>
 </svg>

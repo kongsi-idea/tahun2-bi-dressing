@@ -10,7 +10,7 @@ const COLOUR_WORDS = ['brown', 'red', 'blue', 'grey', 'black', 'green', 'orange'
 // 衣服类型：img = 素材名；word = 显示的词；letters = 要打的字母；file = 音档名
 const TYPES = [
   { id: 'cap',      word: 'cap',      letters: 'cap',     file: 'cap' },
-  { id: 'tshirt',   word: 'T-shirt',  letters: 'tshirt',  file: 't-shirt' },
+  { id: 'tshirt',   word: 'T-shirt',  letters: 'Tshirt',  file: 't-shirt' },
   { id: 'jacket',   word: 'jacket',   letters: 'jacket',  file: 'jacket' },
   { id: 'trousers', word: 'trousers', letters: 'trousers', file: 'trousers' },
   { id: 'socks',    word: 'socks',    letters: 'socks',   file: 'socks' },
@@ -34,18 +34,10 @@ const ITEMS = RAW.map(([color, type, bg], i) => ({
 const BY_ID = Object.fromEntries(ITEMS.map(it => [it.id, it]));
 const ITEM_COUNT = 18, SET_SIZE = 6;
 
-// 卡比巴拉身上的 7 个图层（袜子左右各一）从下到上；位置用百分比（相对卡比巴拉图）
-// cx/cy = 图层中心点占卡比巴拉图宽/高的 %，w/h = 图层宽/高占其宽/高的 %，rot = 旋转角度
-const LAYERS = ['socks-l', 'socks-r', 'shoes', 'trousers', 'tshirt', 'jacket', 'cap'];
-const SLOTS = {
-  'socks-l':  { cx: 34, cy: 84,  w: 21, h: 24 },
-  'socks-r':  { cx: 66, cy: 84,  w: 21, h: 24 },
-  'shoes':    { cx: 49, cy: 95,  w: 57, h: 14 },
-  'trousers': { cx: 50, cy: 69,  w: 58, h: 44 },
-  'tshirt':   { cx: 50, cy: 52,  w: 62, h: 33 },
-  'jacket':   { cx: 50, cy: 48,  w: 96, h: 39 },
-  'cap':      { cx: 49, cy: -2,  w: 40, h: 19.5, rot: 16 },
-};
+// 课本转盘每 6 格刚好是一整套（每种衣服各一件）→ 3 套；整套拼齐后出现「卡比巴拉穿上整套」
+const SETS = [0, 1, 2].map(k => ITEMS.slice(k * SET_SIZE, (k + 1) * SET_SIZE));
+const setOf = it => Math.floor((it.n - 1) / SET_SIZE);
+const STARS_PER_ITEM = 5;                    // 拼对一件固定 +5，不因错误、字母块、发音而扣
 
 const SPIN_MS = 3000;
 const KB_ROWS = ['qwertyuiop', 'asdfghjkl', 'zxcvbnm'];
@@ -65,23 +57,23 @@ let epoch = 0;                               // 重置／换局时自增，让�
 function later(ms, fn) { const e = epoch; return setTimeout(() => { if (e === epoch) fn(); }, ms); }
 
 /* ════════════════ 存档 ════════════════ */
-function freshState() { return { collected: [], worn: {}, stars: 0, colourOK: 0, clothOK: 0, sets: 0, muted: false }; }
+function freshState() { return { collected: [], rewarded: [], stars: 0, muted: false, tiles: true }; }
 function loadState() {
   let s = freshState();
   try {
     const raw = localStorage.getItem(SAVE_KEY);
     if (raw) {
       const o = JSON.parse(raw);
-      s.collected = Array.isArray(o.collected) ? o.collected.filter(id => BY_ID[id]) : [];
-      s.collected = [...new Set(s.collected)];
-      s.worn = {};
-      if (o.worn && typeof o.worn === 'object') for (const [t, id] of Object.entries(o.worn)) if (TYPE[t] && BY_ID[id] && BY_ID[id].type === t) s.worn[t] = id;
-      for (const k of ['stars', 'colourOK', 'clothOK', 'sets']) s[k] = Math.max(0, Number(o[k]) || 0);
+      const ids = (Array.isArray(o.collected) ? o.collected : []).concat(o.worn && typeof o.worn === 'object' ? Object.values(o.worn) : []);
+      s.collected = [...new Set(ids.filter(id => BY_ID[id]))];
+      s.rewarded = (Array.isArray(o.rewarded) ? o.rewarded : []).filter(k => k >= 0 && k < SETS.length);
+      s.stars = Math.max(0, Number(o.stars) || 0);
       s.muted = !!o.muted;
+      s.tiles = o.tiles !== false;
     }
   } catch (e) { /* 存档读不到就当新玩家 */ }
-  // 上次关页面时正好穿满一套 → 已经存进收藏，穿着清掉
-  if (Object.keys(s.worn).length >= SET_SIZE) { for (const id of Object.values(s.worn)) if (!s.collected.includes(id)) s.collected.push(id); s.worn = {}; }
+  // 旧存档里已经凑满的套，视为领过奖励，不再弹
+  SETS.forEach((st, k) => { if (st.every(it => s.collected.includes(it.id)) && !s.rewarded.includes(k)) s.rewarded.push(k); });
   return s;
 }
 let S = loadState();
@@ -89,7 +81,7 @@ function save() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } cat
 
 /* ════════════════ 图片、着色 ════════════════ */
 const IMG = {};
-const IMG_NAMES = ['capybara', 'cap', 'tshirt', 'jacket', 'trousers', 'socks', 'socks-l', 'socks-r', 'shoes'];
+const IMG_NAMES = ['cap', 'tshirt', 'jacket', 'trousers', 'socks', 'shoes'];
 function loadImages() {
   return Promise.all(IMG_NAMES.map(n => new Promise(res => {
     const im = new Image(); im.onload = () => res(); im.onerror = () => res(); im.src = `assets/${n}.webp`; IMG[n] = im;
@@ -199,22 +191,13 @@ function say(files) {
   const list = Array.isArray(files) ? files : [files];
   return list.reduce((p, f) => p.then(() => (tok === audioToken ? playOne(f, tok) : null)), Promise.resolve()).catch(() => {});
 }
-function allVoiceLines() {
-  const L = [];
-  for (const c of COLOUR_WORDS) L.push({ file: c, text: c });
-  for (const t of TYPES) L.push({ file: t.file, text: t.word });
-  for (const it of ITEMS) L.push({ file: it.id, text: it.phrase });
-  L.push({ file: 'great', text: 'Great!' }, { file: 'try-again', text: 'Try again' },
-         { file: 'well-done', text: 'Well done!' }, { file: 'you-collected-all-18', text: 'You collected all 18!' });
-  return L;
-}
 
 /* ════════════════ 转盘（画布） ════════════════ */
 const SECTORS = 20, SEC_DEG = 360 / SECTORS;
 const wBase = $('#wBase'), wRot = $('#wRot'), wTop = $('#wTop');
 const wrap = $('#wheelWrap');
 const CX = 640, CY = 640, RR = 640;
-const R_RIM_IN = 0.90 * RR, R_HUB = 0.58 * RR;
+const R_RIM_IN = 0.92 * RR, R_HUB = 0.30 * RR;
 
 function woodGrain(x, cx, cy, r0, r1, seed) {
   let s = seed; const rand = () => (s = (s * 16807) % 2147483647) / 2147483647;
@@ -255,10 +238,6 @@ function drawBase() {
   g = x.createRadialGradient(CX - 120, CY - 150, 20, CX, CY, R_HUB);
   g.addColorStop(0, '#FFFBF0'); g.addColorStop(.7, '#FDEBCB'); g.addColorStop(1, '#F1D3A1');
   x.fillStyle = g; x.beginPath(); x.arc(CX, CY, R_HUB + 4, 0, 7); x.fill();
-  // 舞台地板：圆弧底下一圈淡木色，卡比巴拉像站在台上
-  const fl = x.createLinearGradient(0, CY + R_HUB * .55, 0, CY + R_HUB);
-  fl.addColorStop(0, 'rgba(176,120,64,0)'); fl.addColorStop(1, 'rgba(176,120,64,.38)');
-  x.fillStyle = fl; x.beginPath(); x.arc(CX, CY, R_HUB + 4, 0, 7); x.fill();
   paintNoise(x, () => { x.beginPath(); x.arc(CX, CY, R_HUB, 0, 7); x.clip(); }, 0.03, 5, 1800);
 }
 function wedgePath(x, i, r0, r1) {
@@ -287,8 +266,8 @@ function drawFinishIcon(x, size) {
 function drawRot() {
   const x = wRot.getContext('2d');
   x.clearRect(0, 0, 1280, 1280);
-  const rIcon = (R_HUB + R_RIM_IN) / 2 + 4;
-  const box = Math.round(0.215 * RR * 1.0);
+  const rIcon = 0.67 * RR;                 // 图片中心比扇形正中再往外一点
+  const box = Math.round(0.245 * RR);
   const sectorBg = i => i === 0 ? '#5CC07B' : i === SECTORS - 1 ? '#EDE3D2' : ITEMS[i - 1].bg;
   for (let i = 0; i < SECTORS; i++) {
     wedgePath(x, i, R_HUB, R_RIM_IN);
@@ -382,97 +361,54 @@ function spinTo(item, done) {
   requestAnimationFrame(step);
 }
 
-/* ════════════════ 卡比巴拉穿衣 ════════════════ */
-const capy = $('#capy');
-const layerEls = Object.fromEntries(LAYERS.map(L => [L, $(`[data-layer="${L}"]`)]));
-function placeLayers() {
-  for (const L of LAYERS) {
-    const s = SLOTS[L], el = layerEls[L];
-    el.style.left = s.cx + '%'; el.style.top = s.cy + '%';
-    el.style.width = s.w + '%'; el.style.height = s.h + '%';
-    el.style.setProperty('--rot', (s.rot || 0) + 'deg');
-  }
-}
-function renderDress(animate) {
-  for (const L of LAYERS) {
-    const type = L.replace(/-[lr]$/, ''), id = S.worn[type], el = layerEls[L];
-    if (id) {
-      const it = BY_ID[id];
-      if (el.hidden || el.dataset.id !== id) {
-        el.src = tintedURL(L, it.color); el.dataset.id = id; el.hidden = false; el.classList.remove('off');
-        if (animate && !REDUCED) { el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); }
-      }
-    } else if (!el.hidden) {
-      if (animate && !REDUCED) { el.classList.add('off'); const e = epoch; setTimeout(() => { if (!S.worn[type]) { el.hidden = true; el.classList.remove('off', 'pop'); delete el.dataset.id; } }, 460); }
-      else { el.hidden = true; el.classList.remove('off', 'pop'); delete el.dataset.id; }
-    }
-  }
-}
-
-/* ════════════════ 顶栏、这套的小格子、收藏 ════════════════ */
-function wornCount() { return Object.keys(S.worn).length; }
+/* ════════════════ 顶栏、收藏 ════════════════ */
+const collected = id => S.collected.includes(id);
+const setDone = k => SETS[k].every(it => collected(it.id));
 function renderHeader() {
   $('#starTotal').textContent = S.stars;
-  $('#wornCount').textContent = `${wornCount()}/${SET_SIZE}`;
   $('#colCount').textContent = `${S.collected.length}/${ITEM_COUNT}`;
-  $('#setDots').innerHTML = TYPES.map(t => `<i class="${S.worn[t.id] ? 'on' : ''}"></i>`).join('');
-  $('#okColour').textContent = S.colourOK; $('#okCloth').textContent = S.clothOK;
-  $('#idleHint').textContent = wornCount() === 0 ? `Set ${S.sets + 1}: spin the wheel!` : 'Spin again!';
   const snd = $('#btnSound');
   snd.setAttribute('aria-pressed', String(S.muted));
   snd.setAttribute('aria-label', S.muted ? 'Sound off' : 'Sound on');
   snd.querySelector('use').setAttribute('href', S.muted ? '#i-mute' : '#i-speaker');
-  renderStrip();
+  $('#btnTilesOn').setAttribute('aria-pressed', String(S.tiles));
+  $('#btnTilesOff').setAttribute('aria-pressed', String(!S.tiles));
 }
-function renderStrip() {
-  $('#strip').innerHTML = TYPES.map(t => {
-    const id = S.worn[t.id];
-    const src = id ? tintedURL(t.id, BY_ID[id].color) : silhouetteURL(t.id);
-    return `<div class="slot ${id ? 'got' : ''}" data-type="${t.id}"><img src="${src}" alt="${id ? BY_ID[id].phrase : t.word + ' not yet'}" draggable="false">${id ? `<svg class="tick" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check"/></svg>` : ''}</div>`;
-  }).join('');
-}
-function renderCollection() {
-  const sub = `${S.collected.length} of ${ITEM_COUNT}`;
-  $('#colSub').textContent = sub;
-  const cols = TYPES.map(t => ITEMS.filter(it => it.type === t.id));
+// 收藏：每一横排＝一套（第 1、2、3 套），每一竖列＝一种衣服；6 个一排，共 3 排
+function renderCollection(newId) {
+  $('#colSub').textContent = `${S.collected.length} of ${ITEM_COUNT}`;
   let html = '';
-  for (let r = 0; r < 3; r++) for (let c = 0; c < TYPES.length; c++) {
-    const it = cols[c][r], got = S.collected.includes(it.id);
-    html += got
-      ? `<button type="button" class="tile got" data-id="${it.id}" style="--tile:${it.bg}" aria-label="${it.phrase}, listen"><img src="${tintedURL(it.type, it.color)}" alt="" draggable="false"><span class="cap">${it.phrase}</span></button>`
-      : `<div class="tile lock" aria-label="Not collected yet"><img src="${silhouetteURL(it.type)}" alt="" draggable="false"><span class="q">?</span></div>`;
-  }
+  SETS.forEach((st, k) => {
+    for (const t of TYPES) {
+      const it = st.find(x => x.type === t.id), got = collected(it.id);
+      html += got
+        ? `<div class="tile got ${it.id === newId ? 'fresh' : ''}" data-id="${it.id}" style="--tile:${it.bg}"><img src="${tintedURL(it.type, it.color)}" alt="${it.phrase}" draggable="false"><span class="cap">${it.phrase}</span></div>`
+        : `<div class="tile lock" aria-label="Locked"><img src="${silhouetteURL(it.type)}" alt="" draggable="false"><span class="cap lockcap"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-lock"/></svg>Locked</span></div>`;
+    }
+  });
   $('#shelf').innerHTML = html;
 }
 
 /* ════════════════ 流程 ════════════════ */
-let phase = 'idle';                 // idle | spinning | answer | done | celebrate | final
+let phase = 'idle';                 // idle | spinning | answer | done | reward | final
 function setPhase(p) { phase = p; document.body.dataset.phase = p; }
 let forcedId = null;
 let round = null;                   // 当前这一件
 
 function showView(name) {
-  $('#viewIdle').hidden = name !== 'idle';
-  $('#viewAnswer').hidden = name !== 'answer';
-  $('#viewDone').hidden = name !== 'done';
-}
-function setScreen(v) {
-  document.body.dataset.view = v;
-  if (v === 'collection') renderCollection();
-  $('#btnPlay').setAttribute('aria-current', v === 'play' ? 'page' : 'false');
-  $('#btnCollection').setAttribute('aria-current', v === 'collection' ? 'page' : 'false');
+  for (const v of ['idle', 'answer', 'done', 'reward']) $('#view' + v[0].toUpperCase() + v.slice(1)).hidden = name !== v;
 }
 
+// 落点：只在「当前这一套（第一个没凑满的套）」里没拼过的那几件里抽；转盘上 18 件照样都画着
 function pickItem() {
   if (forcedId) { const it = BY_ID[forcedId]; forcedId = null; if (it) return it; }
-  const wornTypes = new Set(Object.keys(S.worn));
-  const cands = ITEMS.filter(it => !wornTypes.has(it.type));      // 只抽这套还没穿的类型
-  const fresh = cands.filter(it => !S.collected.includes(it.id)); // 优先没收集过的
-  return pickOne(fresh.length ? fresh : cands);
+  let k = SETS.findIndex((_, i) => !setDone(i)); if (k < 0) k = 0;
+  const cands = SETS[k].filter(it => !collected(it.id));
+  return pickOne(cands.length ? cands : SETS[k]);
 }
 
 function spin() {
-  if (phase !== 'idle' || document.body.dataset.view !== 'play') return;
+  if (phase !== 'idle') return;
   acted = true;
   const item = pickItem();
   setPhase('spinning');
@@ -482,23 +418,27 @@ function spin() {
   });
 }
 
-function makeWord(text, letters, upperFirst) {
+function makeWord(text, letters) {
   const cells = [];
   let li = 0;
   for (const ch of text) {
     if (ch === '-') cells.push({ fixed: true, ch: '-', val: '', want: '', state: 'fixed' });
-    else { cells.push({ fixed: false, want: letters[li], val: '', state: '', upper: upperFirst && li === 0 }); li++; }
+    else { cells.push({ fixed: false, want: letters[li], val: '', state: '' }); li++; }
   }
-  return { text, cells, help: 0, errors: 0 };
+  return { text, letters, cells, errors: 0 };
+}
+function shuffled(letters) {
+  const a = [...letters];
+  for (let tries = 0; tries < 12; tries++) {
+    for (let i = a.length - 1; i > 0; i--) { const j = rnd(i + 1); [a[i], a[j]] = [a[j], a[i]]; }
+    if (a.join('') !== letters) break;
+  }
+  return a;
 }
 function startRound(item) {
   const t = TYPE[item.type];
-  round = {
-    item, stage: 'colour', busy: false, helps: 0, errors: 0,
-    colour: makeWord(item.color, item.color, false),
-    cloth: makeWord(t.word, t.letters, t.word[0] === 'T'),
-  };
-  // 答题面板：大图（带颜色）+ 喇叭
+  round = { item, stage: 'colour', busy: false, errors: 0, colour: makeWord(item.color, item.color), cloth: makeWord(t.word, t.letters), tiles: shuffled(item.color) };
+  // 落点后把抽到的那件放大显示（带颜色）
   const pic = $('#itemPic'), px = pic.getContext('2d');
   px.clearRect(0, 0, pic.width, pic.height);
   const tc = tinted(item.type, item.color);
@@ -506,23 +446,33 @@ function startRound(item) {
   const sm = downscale(tc, Math.round(tc.width * k), Math.round(tc.height * k));
   px.drawImage(sm, (pic.width - sm.width) / 2, (pic.height - sm.height) / 2);
   $('#itemTag').style.setProperty('--tag', item.bg);
+  $('#itemTag').classList.remove('zoom'); void $('#itemTag').offsetWidth; $('#itemTag').classList.add('zoom');
   $('#msg').textContent = ''; $('#msg').className = 'msg';
   renderAsk();
-  showView('answer'); setPhase('answer');
-  say(item.id);
-  // 手机直立：面板比屏幕高时，只滚到刚好看见键盘，转盘留在上方
-  requestAnimationFrame(() => { const r = $('#panel').getBoundingClientRect(); if (r.bottom > innerHeight - 4) window.scrollBy({ top: r.bottom - innerHeight + 12, behavior: REDUCED ? 'auto' : 'smooth' }); });
+  showView('answer'); setPhase('answer');           // 不自动读音；要听的同学自己点喇叭
 }
 function curWord() { return round.stage === 'colour' ? round.colour : round.cloth; }
-function stars() { const pen = round.helps + round.errors; return pen === 0 ? 3 : pen <= 2 ? 2 : 1; }
 
 function renderWord(W, el, active) {
   const firstEmpty = active ? W.cells.findIndex(c => !c.fixed && c.state !== 'locked' && !c.val) : -1;
   el.innerHTML = W.cells.map((c, i) => {
     if (c.fixed) return `<span class="cell fixed" aria-hidden="true">-</span>`;
-    const txt = c.val ? (c.upper ? c.val.toUpperCase() : c.val) : '';
     const cls = ['cell', c.state, i === firstEmpty ? 'next' : '', c.bounce ? 'bounce' : ''].filter(Boolean).join(' ');
-    return `<span class="${cls}" data-i="${i}" data-ch="${c.val}" style="--d:${i * 70}ms">${txt}</span>`;
+    return `<span class="${cls}" data-i="${i}" style="--d:${i * 70}ms">${c.val}</span>`;
+  }).join('');
+}
+function renderTiles() {
+  const box = $('#tiles');
+  box.hidden = !S.tiles; $('#kb').hidden = S.tiles;
+  if (!S.tiles || !round) { box.innerHTML = ''; return; }
+  const typed = {};
+  for (const c of curWord().cells) if (!c.fixed && c.val) typed[c.val] = (typed[c.val] || 0) + 1;
+  const seen = {};
+  const tiles = round.stage === 'colour' ? round.tiles : (round.tilesCloth || (round.tilesCloth = shuffled(round.cloth.letters)));
+  box.innerHTML = tiles.map(ch => {
+    seen[ch] = (seen[ch] || 0) + 1;
+    const used = seen[ch] <= (typed[ch] || 0);
+    return `<button type="button" class="tile-btn${used ? ' used' : ''}" data-ch="${ch}"${used ? ' disabled' : ''} aria-label="${ch}">${ch}</button>`;
   }).join('');
 }
 function renderAsk() {
@@ -533,12 +483,7 @@ function renderAsk() {
   $('#rowCloth').classList.toggle('active', R.stage === 'cloth');
   $('#rowColour').classList.toggle('done', R.colour.cells.every(c => c.fixed || c.state === 'locked'));
   $('#stepLine').innerHTML = R.stage === 'colour' ? 'Spell the <b>colour</b>' : 'Now spell the <b>clothes</b>';
-  $('#itemStars').innerHTML = starsHTML(stars());
-  const W = curWord();
-  const lbl = ['Hear it', 'First letter', 'Peek', 'That is all'][W.help];
-  $('#helpLbl').textContent = 'Help · ' + lbl;
-  $$('#helpPips i').forEach((p, i) => p.classList.toggle('on', i < W.help));
-  $('#btnHelp').disabled = W.help >= 3 || R.busy;
+  renderTiles();
 }
 
 function typeLetter(ch) {
@@ -564,12 +509,11 @@ function checkWord() {
   const open = W.cells.filter(c => !c.fixed && c.state !== 'locked');
   if (open.some(c => !c.val)) return;               // 还没打满
   let bad = 0;
-  for (const c of open) { if (c.val === c.want) c.state = 'locked'; else { c.state = 'wrong'; bad++; } }
+  for (const c of open) { if (c.val === c.want) c.state = 'locked'; else { c.state = 'wrong'; bad++; } }   // 大小写要对：只有 T-shirt 的 T 大写
   if (bad) {
     W.errors += bad; round.errors += bad; round.busy = true;
     renderAsk();
     const msg = $('#msg'); msg.textContent = 'Try again'; msg.className = 'msg try';
-    say('try-again');
     later(560, () => {
       for (const c of W.cells) if (c.state === 'wrong') { c.state = ''; c.val = ''; }
       round.busy = false; renderAsk();
@@ -585,87 +529,54 @@ function wordDone() {
   renderAsk();
   $('#msg').textContent = ''; $('#msg').className = 'msg';
   if (round.stage === 'colour') {
-    say(round.item.color);
     later(950, () => {
       W.cells.forEach(c => { c.bounce = false; });
       round.stage = 'cloth'; round.busy = false;
       $('#msg').textContent = 'Great!'; $('#msg').className = 'msg ok';
       renderAsk();
     });
-  } else {
-    say(TYPE[round.item.type].file);
-    later(950, finishItem);
-  }
-}
-
-function helpClick() {
-  if (phase !== 'answer' || !round || round.busy) return;
-  const W = curWord();
-  if (W.help >= 3) return;
-  W.help++; round.helps++;
-  const el = round.stage === 'colour' ? 'Colour' : 'Cloth';
-  if (W.help === 1) {
-    say(round.stage === 'colour' ? round.item.color : TYPE[round.item.type].file);
-  } else if (W.help === 2) {
-    const c = W.cells.find(x => !x.fixed && x.state !== 'locked');
-    if (c) { c.val = c.want; c.state = 'locked hint'; }
-    renderAsk(); checkWord();
-    return;
-  } else {
-    const peek = $('#peek' + el);
-    peek.textContent = W.text; peek.classList.add('show');
-    const e = epoch;
-    setTimeout(() => { peek.classList.remove('show'); }, 3000);
-  }
-  renderAsk();
+  } else later(950, finishItem);
 }
 
 function finishItem() {
-  const R = round, it = R.item;
-  const earned = stars();
-  S.stars += earned;
-  if (R.colour.errors === 0 && R.colour.help === 0) S.colourOK++;
-  if (R.cloth.errors === 0 && R.cloth.help === 0) S.clothOK++;
-  S.worn[it.type] = it.id;
+  const it = round.item;
+  if (!collected(it.id)) S.collected.push(it.id);   // 拼对马上解锁进收藏，一件一件来
+  S.stars += STARS_PER_ITEM;
   save();
-  renderDress(true); renderHeader();
-  // 完成卡
+  renderHeader(); renderCollection(it.id);
   setPhase('done'); showView('done');
-  $('#doneTitle').textContent = 'Great!';
   $('#donePic').innerHTML = `<img src="${tintedURL(it.type, it.color)}" alt="" draggable="false">`;
   $('#donePic').style.setProperty('--tag', it.bg);
-  $('#doneStars').innerHTML = starsHTML(earned);
-  $('#btnNextSet').hidden = true;
-  say([it.id, 'great']);
+  $('#doneName').textContent = it.phrase;
+  say(it.id);                                       // 拼完才读一次
   round = null;
-  later(1900, () => { wornCount() >= SET_SIZE ? setComplete() : backToIdle(); });
+  later(1900, () => {
+    const k = setOf(it);
+    if (setDone(k) && !S.rewarded.includes(k)) showReward(k); else backToIdle();
+  });
 }
-function backToIdle() { setPhase('idle'); showView('idle'); renderHeader(); if (window.scrollY > 0) window.scrollTo({ top: 0, behavior: REDUCED ? 'auto' : 'smooth' }); }
+function backToIdle() { setPhase('idle'); showView('idle'); renderHeader(); }
 
-function setComplete() {
-  const items = Object.values(S.worn);
-  for (const id of items) if (!S.collected.includes(id)) S.collected.push(id);
-  S.sets++; save(); renderHeader();
-  if (S.collected.length >= ITEM_COUNT) { showFinale(); return; }
-  setPhase('celebrate'); showView('done');
-  $('#doneTitle').textContent = 'Well done!';
-  $('#donePic').innerHTML = items.map(id => `<img src="${tintedURL(BY_ID[id].type, BY_ID[id].color)}" alt="" draggable="false">`).join('');
-  $('#donePic').classList.add('set');
-  $('#doneStars').innerHTML = `<span class="saved">Set ${S.sets} is in your Collection</span>`;
-  $('#btnNextSet').hidden = false;
-  capy.classList.add('dance');
+/* ── 一套凑满：卡比巴拉穿上整套（3 张预先生成的图；图缺时用 6 件衣服排一排顶着） ── */
+function showReward(k) {
+  if (!S.rewarded.includes(k)) { S.rewarded.push(k); save(); }
+  setPhase('reward'); showView('reward');
+  const img = $('#rewardImg'), grid = $('#rewardGrid');
+  grid.innerHTML = SETS[k].map(it => `<img src="${tintedURL(it.type, it.color)}" alt="" draggable="false">`).join('');
+  img.hidden = true; grid.hidden = false;
+  img.onload = () => { img.hidden = false; grid.hidden = true; };
+  img.onerror = () => { img.hidden = true; grid.hidden = false; };
+  img.alt = `Capybara wearing outfit ${k + 1}`;
+  img.src = `assets/outfit-${k + 1}.webp`;
+  $('#rewardTitle').textContent = 'Well done!';
+  $('#rewardSub').textContent = `Outfit ${k + 1} is complete!`;
+  $('#btnReward').textContent = S.collected.length >= ITEM_COUNT ? 'See my stars' : 'Keep going';
   confetti(3400);
   say('well-done');
-  later(3800, nextSet);
 }
-function nextSet() {
-  if (phase !== 'celebrate') return;
-  epoch++;                                         // 取消还在排队的 later(nextSet)
-  capy.classList.remove('dance');
-  S.worn = {}; save();
-  renderDress(true);
-  $('#donePic').classList.remove('set');
-  backToIdle();
+function rewardNext() {
+  if (phase !== 'reward') return;
+  if (S.collected.length >= ITEM_COUNT) showFinale(); else backToIdle();
 }
 
 function showFinale() {
@@ -673,27 +584,26 @@ function showFinale() {
   $('#finaleStars').textContent = S.stars;
   $('#finaleGrid').innerHTML = ITEMS.map(it => `<img src="${tintedURL(it.type, it.color)}" alt="${it.phrase}" style="--tile:${it.bg}" draggable="false">`).join('');
   $('#finale').hidden = false;
-  capy.classList.add('dance');
   confetti(5200);
   say('you-collected-all-18');
 }
 function playAgain() {
   epoch++;
-  $('#finale').hidden = true; capy.classList.remove('dance');
-  const muted = S.muted;
-  S = freshState(); S.muted = muted; save();
-  renderDress(true); renderHeader(); renderCollection();
-  round = null; setScreen('play'); backToIdle();
+  $('#finale').hidden = true;
+  const muted = S.muted, tiles = S.tiles;
+  S = freshState(); S.muted = muted; S.tiles = tiles; save();
+  renderHeader(); renderCollection();
+  round = null; backToIdle();
 }
 function doReset() {
   epoch++;
-  $('#confirm').hidden = true; $('#finale').hidden = true; capy.classList.remove('dance');
-  const muted = S.muted;
-  S = freshState(); S.muted = muted; save();
+  $('#confirm').hidden = true; $('#finale').hidden = true;
+  const muted = S.muted, tiles = S.tiles;
+  S = freshState(); S.muted = muted; S.tiles = tiles; save();
   round = null; audioToken++;
   try { if (audioEl) audioEl.pause(); } catch (e) { /* ignore */ }
-  renderDress(false); renderHeader(); renderCollection();
-  setScreen('play'); showView('idle'); setPhase('idle');
+  renderHeader(); renderCollection();
+  showView('idle'); setPhase('idle');
 }
 
 /* ════════════════ 彩带 ════════════════ */
@@ -727,27 +637,40 @@ function confetti(ms) {
   requestAnimationFrame(step);
 }
 
-/* ════════════════ 屏幕键盘 + 事件 ════════════════ */
+/* ════════════════ 屏幕键盘、字母块、事件 ════════════════ */
+let shiftOn = false;
 function buildKeyboard() {
   const kb = $('#kb');
-  kb.innerHTML = KB_ROWS.map((row, ri) => `<div class="kb-row r${ri}">${[...row].map(k => `<button type="button" class="key" data-k="${k}" aria-label="${k}">${k.toUpperCase()}</button>`).join('')}${ri === 2 ? '<button type="button" class="key key-del" data-k="Backspace" aria-label="Delete"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bksp"/></svg></button>' : ''}</div>`).join('');
+  const key = k => `<button type="button" class="key" data-k="${k}" aria-label="${k}">${k}</button>`;
+  kb.innerHTML = KB_ROWS.map((row, ri) => {
+    const pre = ri === 2 ? '<button type="button" class="key key-shift" data-k="Shift" aria-label="Capital letter" aria-pressed="false"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-shift"/></svg></button>' : '';
+    const post = ri === 2 ? '<button type="button" class="key key-del" data-k="Backspace" aria-label="Delete"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bksp"/></svg></button>' : '';
+    return `<div class="kb-row r${ri}">${pre}${[...row].map(key).join('')}${post}</div>`;
+  }).join('');
   kb.addEventListener('pointerdown', e => { if (e.target.closest('.key')) e.preventDefault(); });   // 不抢焦点
   kb.addEventListener('click', e => {
     const b = e.target.closest('.key'); if (!b) return;
     acted = true;
     const k = b.dataset.k;
-    if (k === 'Backspace') backspace(); else typeLetter(k);
+    if (k === 'Backspace') backspace();
+    else if (k === 'Shift') setShift(!shiftOn);
+    else { typeLetter(shiftOn ? k.toUpperCase() : k); setShift(false); }
   });
 }
+function setShift(on) {
+  shiftOn = on; const kb = $('#kb'); kb.dataset.shift = on ? '1' : '';
+  const b = $('.key-shift', kb); if (b) b.setAttribute('aria-pressed', String(on));
+}
 function flashKey(k) {
-  const b = $(`.key[data-k="${k}"]`); if (!b) return;
+  const b = $(`.key[data-k="${k.toLowerCase()}"]`); if (!b || $('#kb').hidden) return;
   b.classList.add('lit'); setTimeout(() => b.classList.remove('lit'), 220);
 }
+function setTilesMode(on) { S.tiles = on; save(); renderHeader(); if (round) renderAsk(); }
+
 document.addEventListener('keydown', e => {
   acted = true;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (!$('#confirm').hidden || !$('#finale').hidden) return;
-  if (document.body.dataset.view !== 'play') return;
   if (e.key === ' ' || e.code === 'Space') {
     const ae = document.activeElement;
     if (phase === 'idle' && (!ae || ae === document.body || ae.id === 'btnSpin')) { e.preventDefault(); spin(); }
@@ -755,52 +678,41 @@ document.addEventListener('keydown', e => {
   }
   if (phase !== 'answer') return;
   if (e.key === 'Backspace') { e.preventDefault(); flashKey('Backspace'); backspace(); return; }
-  if (/^[a-zA-Z]$/.test(e.key)) { e.preventDefault(); const k = e.key.toLowerCase(); flashKey(k); typeLetter(k); }
+  if (/^[a-zA-Z]$/.test(e.key)) { e.preventDefault(); flashKey(e.key); typeLetter(e.key); }   // 照实际按出的大小写
 });
 document.addEventListener('pointerdown', () => { acted = true; }, { capture: true });
 
-$('#btnSpin').addEventListener('click', spin);
-$('#btnSay').addEventListener('click', () => { acted = true; if (round) say(round.item.id); });
-$('#btnHelp').addEventListener('click', () => { acted = true; helpClick(); });
-$('#btnPlay').addEventListener('click', () => setScreen('play'));
-$('#btnCollection').addEventListener('click', () => setScreen('collection'));
-$('#btnNextSet').addEventListener('click', nextSet);
+wrap.addEventListener('click', spin);                                   // 点转盘就转
+$('#btnSay').addEventListener('click', () => { acted = true; if (round) say(round.item.id); });   // 学生自己点才读，不影响星星
+$('#tiles').addEventListener('click', e => { const b = e.target.closest('.tile-btn'); if (b && !b.disabled) { acted = true; typeLetter(b.dataset.ch); } });
+$('#btnTilesOn').addEventListener('click', e => { setTilesMode(true); e.currentTarget.blur(); });     // 点完让按钮失焦，空白键才能继续转盘
+$('#btnTilesOff').addEventListener('click', e => { setTilesMode(false); e.currentTarget.blur(); });
+$('#btnReward').addEventListener('click', rewardNext);
 $('#btnSound').addEventListener('click', () => { S.muted = !S.muted; if (S.muted) { audioToken++; try { if (audioEl) audioEl.pause(); } catch (e) { /* ignore */ } } save(); renderHeader(); });
 $('#btnReset').addEventListener('click', () => { $('#confirm').hidden = false; $('#btnConfirmNo').focus(); });
 $('#btnConfirmNo').addEventListener('click', () => { $('#confirm').hidden = true; });
 $('#btnConfirmYes').addEventListener('click', doReset);
 $('#btnAgain').addEventListener('click', playAgain);
-$('#btnSeeCol').addEventListener('click', () => { $('#finale').hidden = true; setScreen('collection'); });
-$('#shelf').addEventListener('click', e => {
-  const t = e.target.closest('.tile.got'); if (!t) return;
-  acted = true; say(t.dataset.id);
-  t.classList.remove('bump'); void t.offsetWidth; t.classList.add('bump');
-});
 
 /* ════════════════ 启动 ════════════════ */
 async function init() {
   buildKeyboard();
-  placeLayers();
   drawBase();
   await loadImages();
   drawRot(); drawTop();
   setWheelRot(0);
-  renderDress(false);
   renderHeader(); renderCollection();
-  setScreen('play'); showView('idle'); setPhase('idle');
+  showView('idle'); setPhase('idle');
   if (S.collected.length >= ITEM_COUNT) showFinale();
   document.body.dataset.ready = '1';
 }
 
 window.__dressing = {
   forceNext(id) { const it = typeof id === 'number' ? ITEMS[id - 1] : (BY_ID[id] || ITEMS.find(x => x.phrase.toLowerCase() === String(id).toLowerCase() || x.id === String(id).replace(/\s+/g, '-').toLowerCase())); if (!it) throw new Error('unknown item ' + id); forcedId = it.id; return it.id; },
-  state() { return { collected: [...S.collected], worn: { ...S.worn }, wornCount: wornCount(), stars: S.stars, colourOK: S.colourOK, clothOK: S.clothOK, sets: S.sets, phase, muted: S.muted, current: round ? round.item.id : null, stage: round ? round.stage : null }; },
-  allVoiceLines,
-  items: ITEMS,
+  state() { return { collected: [...S.collected], rewarded: [...S.rewarded], stars: S.stars, phase, muted: S.muted, tiles: S.tiles, current: round ? round.item.id : null, stage: round ? round.stage : null }; },
+  items: ITEMS, sets: SETS,
   lastSpinMs: () => lastSpinMs,
   tinted, wheelIcon,
-  skipCelebration: nextSet,
-  debugWear(map) { S.worn = { ...map }; renderDress(false); renderHeader(); },   // 只给截图／调位置用
 };
 
 init();

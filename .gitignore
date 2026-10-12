@@ -6,3 +6,4 @@ dist/
 .playwright-output/
 assets/raw/
 .vercel
+assets/src/outfits/
