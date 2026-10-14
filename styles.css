@@ -133,7 +133,7 @@ body:not([data-phase="idle"]) .btn-spin { pointer-events: none; }
 
 
 /* ═══════════ 场景：左 转盘／答题（5）＋ 右 收藏（7），同高，一屏看完 ═══════════ */
-:root { --W: min(calc(100dvh - 215px), calc((min(100vw, 1320px) - 84px) * 5 / 12 - 56px), 640px); --cell-h: 64px; --key-h: 46px; --need: 592px; }
+:root { --W: min(calc(100dvh - 240px), calc((min(100vw, 1320px) - 84px) * 5 / 12 - 56px), 640px); --cell-h: 64px; --key-h: 46px; --need: 592px; }
 .stage { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 28px; max-width: 1320px; width: 100%; margin: 0 auto; padding: 14px 28px 12px; align-items: stretch; align-content: center; min-height: 0; }
 
 .panel, .collection {
@@ -163,7 +163,7 @@ body[data-phase="idle"] .wheel-wrap { cursor: pointer; }
 .wl-top { pointer-events: none; }
 .hub { position: absolute; left: 50%; top: 50%; width: calc(var(--W) * .30); height: calc(var(--W) * .30); transform: translate(-50%, -50%); }
 .hub-spin {
-  position: absolute; inset: 7%; border: 0; border-radius: 50%; cursor: pointer; color: #fff;
+  position: absolute; inset: 7%; top: calc(7% - 4px); border: 0; border-radius: 50%; cursor: pointer; color: #fff;
   font: 700 calc(var(--W) * .056)/1 var(--font); letter-spacing: 1px; text-shadow: 0 2px 0 rgba(0,0,0,.28);
   background: radial-gradient(circle at 35% 28%, var(--coral-300), var(--coral-500) 55%, var(--coral-600));
   box-shadow: inset 0 3px 0 rgba(255,255,255,.5), inset 0 -5px 0 rgba(0,0,0,.14), 0 6px 0 var(--coral-800), 0 12px 14px rgba(36,22,9,.35);
@@ -178,7 +178,7 @@ body:not([data-phase="idle"]) .hub-spin { pointer-events: none; filter: saturate
 @keyframes thump { 0% { transform: translateX(-50%) rotate(0) scale(1); } 20% { transform: translateX(-50%) rotate(-9deg) scale(1.08); } 45% { transform: translateX(-50%) rotate(5deg); } 100% { transform: translateX(-50%) rotate(0); } }
 .wheel-wrap[data-spinning] .pointer { animation: tick .11s linear infinite; }
 @keyframes tick { 50% { transform: translateX(-50%) rotate(-5deg); } }
-.space-tip { font-size: 15px; color: var(--ink-soft); text-align: center; }
+.space-tip { margin-top: calc(var(--W) * .06); font-size: 15px; color: var(--ink-soft); text-align: center; }
 kbd { font: 700 13px var(--font); background: var(--paper); color: var(--ink); border-radius: 6px; padding: 2px 8px; box-shadow: 0 2px 0 var(--wood-300), inset 0 1px 0 #fff, 0 0 0 1px var(--wood-300); }
 
 /* ── 答题 ── */
@@ -253,8 +253,8 @@ kbd { font: 700 13px var(--font); background: var(--paper); color: var(--ink); b
 /* ── 一件拼对 / 一套凑满 ── */
 .done-title { font-size: 44px; font-weight: 700; color: var(--teal-700); text-shadow: 0 3px 0 rgba(17,118,111,.18); animation: titlepop .6s cubic-bezier(.2, 1.5, .4, 1) both; }
 @keyframes titlepop { from { transform: scale(.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-.done-pic { --tag: #fff; width: 200px; height: 200px; border-radius: 30px; display: grid; place-items: center; background: radial-gradient(circle at 30% 25%, color-mix(in srgb, var(--tag) 55%, #fff), var(--tag) 70%); box-shadow: inset 0 3px 0 rgba(255,255,255,.7), 0 0 0 6px #FFFDF6, 0 0 0 9px var(--wood-300), 0 10px 14px rgba(36,22,9,.28); }
-.done-pic img { max-width: 84%; max-height: 84%; filter: drop-shadow(1px 3px 3px rgba(36,22,9,.3)); animation: titlepop .55s .1s cubic-bezier(.2, 1.5, .4, 1) both; }
+.done-pic { position: relative; --tag: #fff; width: 200px; height: 200px; border-radius: 30px; display: grid; place-items: center; background: radial-gradient(circle at 30% 25%, color-mix(in srgb, var(--tag) 55%, #fff), var(--tag) 70%); box-shadow: inset 0 3px 0 rgba(255,255,255,.7), 0 0 0 6px #FFFDF6, 0 0 0 9px var(--wood-300), 0 10px 14px rgba(36,22,9,.28); }
+.done-pic img { position: absolute; inset: 8%; width: 84%; height: 84%; object-fit: contain; filter: drop-shadow(1px 3px 3px rgba(36,22,9,.3)); animation: titlepop .55s .1s cubic-bezier(.2, 1.5, .4, 1) both; }
 .done-name { font-size: 30px; font-weight: 700; color: var(--ink); text-align: center; }
 .view-reward { gap: 8px; }
 .view-reward .done-title { font-size: 38px; }

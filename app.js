@@ -1,4 +1,4 @@
-/* The Dressing Game · Tahun 2 English · Get Dressed!
+/* The Dressing Game · Year 2 English · Get Dressed!
    纯静态：转盘（3 秒）→ 拼颜色 → 拼衣服 → 卡比巴拉穿上。 */
 (() => {
 'use strict';

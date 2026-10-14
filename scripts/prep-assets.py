@@ -162,7 +162,7 @@ def main():
         br = p.chromium.launch(); pg = br.new_page()
         pg.goto(f'http://127.0.0.1:{port}/fonts/')
         for name, side in TARGET.items():
-            r = pg.evaluate(JS, {'name': name, 'maxSide': side, 'hollowJacket': name == 'jacket', 'splitSocks': name == 'socks', **dict(zip(('T', 'passes', 'fringeMin'), PARAMS.get(name, DEFAULT_PARAMS)))})
+            r = pg.evaluate(JS, {'name': name, 'maxSide': side, 'hollowJacket': False, 'splitSocks': name == 'socks', **dict(zip(('T', 'passes', 'fringeMin'), PARAMS.get(name, DEFAULT_PARAMS)))})
             for k, v in r.items():
                 if k.startswith('_'):
                     print(f'  {name}: {k} = {v}'); continue

@@ -101,7 +101,7 @@ Start/Finish 的棋盘玩法、接班级名单、排行榜、Supabase、多人�
 ## 必备细节
 - `index.html` 的 `</head>` 前必须有：`<script src="https://kongsi-idea.vercel.app/data/track-use.js" data-slug="tahun2-bi-dressing" defer></script>`。
 - 暴露 `window.__dressing`（测试钩子）：`forceNext(itemId)`（下一次转盘强制落在某件）、`state()`（返回已收集、本套已穿、星星）、`allVoiceLines()`。
-- 工具页内署名：不写人名（默认「卢老师」可以省略）；页脚小字「Tahun 2 English · Get Dressed!」。
+- 工具页内署名：不写人名（默认「卢老师」可以省略）；页脚小字「Year 2 English · Get Dressed!」。
 - `.gitignore` 已存在；不要提交 `.playwright-output/`、`assets/raw/`。
 
 ## 验收标准（交付时逐条给证据）
