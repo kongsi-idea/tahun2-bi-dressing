@@ -12,6 +12,9 @@ Tahun 2 英文 Get Dressed! 单元拼写游戏。线上 https://tahun2-bi-dressi
 - **视觉**：「试衣间舞台」（STYLES.md 07 实体教具），字体 Andika（识字用单层 a/g）。
 - **音档**：edge-tts `en-GB-SoniaNeural` −10%，改词表后跑 `gen-voice.py`。
 - **iCloud**：Documents 会逐出文件，读不出来（Errno 60）先 `brctl download <绝对路径>`。
+- **界面、Hub 缩略图一律写 Year 2，不写 Tahun 2**（2026-10-14 老师纠正）：英文工具对学生是英文环境。Hub 的缩略图是截图，**每次改版都要整组重拍**（页脚、玩法会过期；10-14 就因为只换了封面，老师还看到旧图的 Tahun）。封面 `v1-0-cover` 的牌子字是在生图上用 Andika 补写的，不是重新生图。
+- **夹克内里不抠空**（10-14 老师：「jacket 里部变透明，应该是保留颜色」）：`prep-assets.py` 的 hollowJacket 已关；原来抠空是为了让旧穿衣系统露出里面的 T 恤，该系统已废。
+- **Hub（kongsi-idea）推送后不会自动部署**，要手动 `vercel --prod`（授权名单内）；改完要拿线上文件 md5 对本地，别只看 push 成功。
 - 范围外：班级名单、排行榜、Supabase、任何 API、`alert/confirm`、Help 分档、扣星。
 - DSKP 对照 BI 4.3.2 **未核对官方 PDF**，不进 Hub 的 dskp-index；课本页码待补。
 - **新域名 DNS 坑**：`*.vercel.app` 新项目域名刚建时，家用路由器 DNS 可能缓存「查无此域名」，Safari 报 Can't Find the Server，但网站其实在线（8.8.8.8 可解析）。先清 DNS 缓存／换流量／等，别误判成部署失败。
